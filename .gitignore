@@ -1,0 +1,47 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Angular / Node
+node_modules/
+dist/
+.angular/
+coverage/
+
+# Runtime data
+logs/
+*.log
+*.bak
+*.joblib
+models/
+dukascopy/download/*.csv
+dukascopy/quarantine/*.csv
+services/platform-api/models/
+operations/backups/
+*.sqlite
+*.sqlite3
+*.db
+
+# Credentials, certificates and broker/session material
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+*session*.json
+*token*.json
+
+# Editors / operating systems
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

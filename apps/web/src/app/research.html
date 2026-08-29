@@ -1,0 +1,121 @@
+<main class="research-page">
+  <header class="research-header">
+    <div><a routerLink="/" class="back-link">← Aurex operations</a><p>STRATEGY EVIDENCE</p>
+      <h1>Research & diagnostics</h1>
+      <span>Evidence first. No research control can enable or submit an order.</span></div>
+    <div class="research-actions">
+      <button type="button" [disabled]="busy() !== ''" (click)="syncEvidence()">
+        {{ busy() === 'sync' ? 'Starting…' : 'Refresh evidence' }}
+      </button>
+      <button class="logout" type="button" [disabled]="logoutBusy()" (click)="logout()">
+        {{ logoutBusy() ? 'Logging out…' : 'Logout' }}
+      </button>
+    </div>
+  </header>
+
+  @if (message()) { <div class="message">{{ message() }}</div> }
+  @if (loading()) { <section class="empty">Loading audited research evidence…</section> }
+  @else if (data(); as research) {
+    <section class="safety-strip"><strong>{{ research.status }}</strong><span>Models remain rejected</span>
+      <span>Demo execution blocked</span><span>Execution capability: NONE</span></section>
+
+    <section class="market-grid">
+      @for (market of research.markets; track market.symbol) {
+        <article class="market-card">
+          <div class="card-title"><div><small>{{ market.display_name }}</small><h2>{{ market.symbol }}</h2></div>
+            <span [class.pass]="market.model_status === 'VALIDATED'">{{ market.model_status }}</span></div>
+          <div class="row"><span>Historical data</span><strong>{{ market.feature_complete_rows >= market.required_rows ? 'SUFFICIENT' : 'ACCUMULATING' }}</strong></div>
+          <div class="row"><span>Feature rows</span><strong>{{ market.feature_complete_rows | number }}</strong></div>
+          <div class="row"><span>Historical quality</span><strong>{{ quality(market.symbol)?.historical_research_quality ?? '—' }}</strong></div>
+          <div class="row"><span>Recent IG continuity</span><strong>{{ quality(market.symbol)?.recent_ig_continuity ?? '—' }}</strong></div>
+          <div class="row"><span>Provider boundary</span><strong>{{ quality(market.symbol)?.cross_provider_continuity ?? '—' }}</strong></div>
+          <div class="row"><span>Execution quality</span><strong>{{ quality(market.symbol)?.overall_execution_quality ?? '—' }}</strong></div>
+          <div class="row"><span>Cost model</span><strong>{{ cost(market.symbol)?.version ?? '—' }}</strong></div>
+          <div class="row"><span>Spread observations</span><strong>{{ cost(market.symbol)?.observation_count ?? 0 }}</strong></div>
+          <div class="blockers"><span>Actual blocker</span><strong>{{ market.model_status !== 'VALIDATED' ? 'MODEL NOT VALIDATED' : market.quality_status !== 'PASS' ? 'EXECUTION QUALITY' : 'FORWARD SHADOW' }}</strong></div>
+          <button type="button" [disabled]="busy() !== ''" (click)="runReplay(market.symbol)">
+            {{ busy() === market.symbol ? 'Running chronological replay…' : 'Run diagnostic replay' }}
+          </button>
+        </article>
+      }
+    </section>
+
+    <section class="panel holdout-panel">
+      <div class="panel-heading"><div><p>FINAL OFFLINE EVIDENCE</p><h2>Frozen-candidate holdout</h2></div>
+        <span>{{ research.holdout.policy_version }} · single use</span></div>
+      <div class="holdout-safety"><strong>No automatic promotion</strong><span>A holdout can be consumed only once.</span>
+        <span>Forward shadow remains disabled.</span><span>Broker capability: NONE</span></div>
+      @if (research.holdout.blocked_attempts[0]; as blocked) {
+        <div class="holdout-blocked">
+          <div><small>LATEST RESERVATION ATTEMPT</small><strong>{{ blocked.symbol }} · {{ blocked.outcome?.status }}</strong>
+            <span>{{ blocked.outcome?.reason }}</span></div>
+          <div><small>Development evidence</small><strong>{{ blocked.outcome?.available_development_rows | number }} / {{ blocked.outcome?.required_development_rows | number }}</strong></div>
+          <div><small>Independent holdout</small><strong>{{ blocked.outcome?.available_holdout_rows | number }} / {{ blocked.outcome?.required_holdout_rows | number }}</strong></div>
+          <div><small>Holdout consumed</small><strong>NO</strong></div>
+        </div>
+      }
+      <div class="candidate-grid">
+        @for (candidate of research.holdout.candidates; track candidate.holdout_candidate_id) {
+          <article class="candidate-card">
+            <div><small>{{ candidate.symbol }}</small><h3>{{ candidate.candidate_version }}</h3></div>
+            <span class="candidate-status">{{ candidate.status }}</span>
+            <div class="row"><span>Development rows</span><strong>{{ candidate.development_rows | number }}</strong></div>
+            <div class="row"><span>Reserved holdout rows</span><strong>{{ candidate.holdout_rows | number }}</strong></div>
+            <div class="row"><span>Holdout period</span><strong>{{ candidate.holdout_start_utc | date:'mediumDate':'UTC' }} – {{ candidate.holdout_end_utc | date:'mediumDate':'UTC' }}</strong></div>
+            @if (candidate.status === 'FROZEN') {
+              <button type="button" [disabled]="busy() !== ''" (click)="consumeHoldout(candidate.holdout_candidate_id)">
+                {{ busy() === candidate.holdout_candidate_id ? 'Consuming once…' : 'Evaluate holdout once' }}
+              </button>
+            }
+          </article>
+        } @empty {
+          <div class="empty candidate-empty">No candidate can be frozen until both independent evidence floors are satisfied.</div>
+        }
+      </div>
+      <button class="holdout-refresh" type="button" [disabled]="busy() !== ''" (click)="freezeGermanyCandidate()">
+        {{ busy() === 'holdout-freeze' ? 'Checking evidence floors…' : 'Recheck Germany 40 candidate readiness' }}
+      </button>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><p>EXPERIMENT REGISTRY</p><h2>Immutable research runs</h2></div>
+        <span>{{ research.experiments.length }} experiments</span></div>
+      <div class="experiment-layout">
+        <div class="experiment-list">
+          @for (experiment of research.experiments; track experiment.experiment_id) {
+            <button type="button" [class.active]="selectedExperiment()?.experiment_id === experiment.experiment_id"
+                    (click)="chooseExperiment(experiment)">
+              <strong>{{ experiment.symbol }} · {{ experiment.status }}</strong>
+              <span>{{ experiment.model_version ?? 'No model' }}</span>
+              <small>{{ experiment.started_at_utc | date:'medium':'Africa/Johannesburg' }}</small>
+            </button>
+          } @empty { <div class="empty">No diagnostic experiment has run yet.</div> }
+        </div>
+        @if (selectedExperiment(); as experiment) {
+          <div class="diagnostic">
+            <div class="summary-grid">
+              <div><span>Trades</span><strong>{{ experiment.summary?.['trade_count'] ?? 0 }}</strong></div>
+              <div><span>Profit factor</span><strong>{{ experiment.summary?.['profit_factor'] ?? '—' }}</strong></div>
+              <div><span>Expectancy ZAR</span><strong>{{ experiment.summary?.['cost_aware_expectancy_zar'] ?? '—' }}</strong></div>
+              <div><span>Net P/L ZAR</span><strong>{{ experiment.summary?.['net_pnl_zar'] ?? '—' }}</strong></div>
+              <div><span>Average MAE</span><strong>{{ experiment.summary?.['average_mae_points'] ?? '—' }}</strong></div>
+              <div><span>Average MFE</span><strong>{{ experiment.summary?.['average_mfe_points'] ?? '—' }}</strong></div>
+            </div>
+            <nav class="tabs" aria-label="Diagnostic dimensions">
+              @for (dimension of dimensions; track dimension[0]) {
+                <button type="button" [class.active]="selectedDimension() === dimension[0]" (click)="selectedDimension.set(dimension[0])">{{ dimension[1] }}</button>
+              }
+            </nav>
+            <div class="table-wrap"><table><thead><tr><th>Bucket</th><th>Trades</th><th>Win rate</th><th>Profit factor</th><th>Expectancy</th><th>Net P/L</th><th>Costs</th></tr></thead>
+              <tbody>@for (row of dimensionRows(); track row['bucket']) {<tr><td>{{ row['bucket'] }}</td><td>{{ row['trade_count'] }}</td><td>{{ row['win_rate'] }}</td><td>{{ row['profit_factor'] }}</td><td>{{ row['cost_aware_expectancy_zar'] }}</td><td>{{ row['net_pnl_zar'] }}</td><td>{{ row['total_transaction_cost_zar'] }}</td></tr>} @empty {<tr><td colspan="7">No trades in this dimension.</td></tr>}</tbody>
+            </table></div>
+          </div>
+        }
+      </div>
+    </section>
+
+    <section class="policy"><h2>Holdout discipline</h2>
+      @for (entry of research.holdout_policy | keyvalue; track entry.key) {<div><strong>{{ entry.key }}</strong><span>{{ entry.value }}</span></div>}
+    </section>
+  }
+</main>

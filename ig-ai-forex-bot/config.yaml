@@ -1,0 +1,58 @@
+# Fixed three-pair universe: EUR/USD, GBP/USD and USD/JPY.
+symbols: [EURUSD, GBPUSD, USDJPY]
+timeframe: M15
+history_bars: 2300
+poll_seconds: 60
+
+instruments:
+  EURUSD:
+    epic: CS.D.EURUSD.CFD.IP
+    expiry: DFB
+    currency_code: USD
+    deal_size: 1.0
+    minimum_stop_distance: 0.0010
+    max_spread: 0.00030
+    price_digits: 5
+  GBPUSD:
+    epic: CS.D.GBPUSD.CFD.IP
+    expiry: DFB
+    currency_code: USD
+    deal_size: 1.0
+    minimum_stop_distance: 0.0010
+    max_spread: 0.00030
+    price_digits: 5
+  USDJPY:
+    epic: CS.D.USDJPY.CFD.IP
+    expiry: DFB
+    currency_code: JPY
+    deal_size: 1.0
+    minimum_stop_distance: 0.10
+    max_spread: 0.030
+    price_digits: 3
+
+model:
+  horizon_bars: 4
+  minimum_training_rows: 2000
+  minimum_validation_auc: 0.52
+  buy_probability: 0.58
+  sell_probability: 0.42
+  retrain_hours: 24
+
+risk:
+  risk_per_trade_pct: 0.25
+  max_daily_loss_pct: 1.0
+  max_open_positions: 3
+  max_positions_per_symbol: 1
+  atr_stop_multiplier: 1.5
+  reward_to_risk: 1.8
+
+validation:
+  minimum_trades: 100
+  minimum_profit_factor: 1.15
+  maximum_drawdown_pct: 10.0
+  minimum_demo_days: 30
+
+reporting:
+  email_on_trade: true
+  daily_email_enabled: true
+  daily_email_hour_local: 18

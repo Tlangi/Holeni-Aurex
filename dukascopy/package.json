@@ -1,0 +1,9 @@
+{
+  "name": "aurex-dukascopy-history",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned, bounded Dukascopy historical-data downloader for Aurex",
+  "dependencies": {
+    "dukascopy-node": "1.50.0"
+  }
+}
