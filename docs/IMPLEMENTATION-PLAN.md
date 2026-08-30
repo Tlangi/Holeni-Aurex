@@ -633,3 +633,17 @@ Remaining P1 work includes compact research projections, dataset checksums,
 bootstrap uncertainty, drift alerts, richer session cost stress, SQL privilege
 separation, authentication rate limiting/lockout, and Angular lineage/approval/
 job UX. USD/JPY research remains development-only until those controls are done.
+
+## 22. Session-aware monitoring correction
+
+- Market-data alerting now distinguishes `CLOSED`, `OPEN_GRACE` and `OPEN`.
+- Expected FX weekend closure and Germany 40/Xetra closed sessions do not create
+  stale-candle alerts.
+- A 20-minute reopening grace avoids warning while the first completed M5 candle
+  and stream connection settle.
+- Genuine stale data after grace still warns using the configured M5 threshold.
+- Infrastructure, API, authentication and worker failures remain monitored at
+  all times; market closure suppresses only the data-age symptom.
+- Existing calendar-aware quality audits were verified: the current weekend has
+  zero recent missing periods. Remaining historical warnings describe provider
+  coverage gaps, not closed-market time.

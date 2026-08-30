@@ -1,8 +1,8 @@
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from app.execution_simulator import resolve_candle_exit, spread_cost, transaction_cost_evidence
-from app.market_calendar import is_regular_session
+from app.market_calendar import is_regular_session, market_data_stale, operational_session_state
 
 
 def test_germany_regular_session_uses_berlin_dst() -> None:
@@ -34,6 +34,71 @@ def test_fx_friday_close_is_not_reported_as_missing_market_data() -> None:
     assert not is_regular_session(
         datetime(2026, 8, 21, 21, 0, tzinfo=timezone.utc),
         calendar_code="FX_24X5", market_timezone="UTC", session_open=None, session_close=None,
+    )
+
+
+def test_fx_weekend_is_closed_and_sunday_reopen_has_grace() -> None:
+    closed = operational_session_state(
+        datetime(2026, 8, 30, 7, 0, tzinfo=timezone.utc),
+        calendar_code="FX_24X5", market_timezone="UTC", session_open=None, session_close=None,
+    )
+    grace = operational_session_state(
+        datetime(2026, 8, 30, 21, 10, tzinfo=timezone.utc),
+        calendar_code="FX_24X5", market_timezone="UTC", session_open=None, session_close=None,
+    )
+    opened = operational_session_state(
+        datetime(2026, 8, 30, 21, 25, tzinfo=timezone.utc),
+        calendar_code="FX_24X5", market_timezone="UTC", session_open=None, session_close=None,
+    )
+    assert (closed.status, closed.should_receive_data) == ("CLOSED", False)
+    assert (grace.status, grace.should_receive_data) == ("OPEN_GRACE", False)
+    assert (opened.status, opened.should_receive_data) == ("OPEN", True)
+
+
+def test_xetra_monitoring_uses_local_session_holidays_and_reopen_grace() -> None:
+    before = operational_session_state(
+        datetime(2026, 8, 31, 6, 30, tzinfo=timezone.utc),
+        calendar_code="XETRA_REGULAR", market_timezone="Europe/Berlin",
+        session_open=time(9), session_close=time(17, 30),
+    )
+    grace = operational_session_state(
+        datetime(2026, 8, 31, 7, 10, tzinfo=timezone.utc),
+        calendar_code="XETRA_REGULAR", market_timezone="Europe/Berlin",
+        session_open=time(9), session_close=time(17, 30),
+    )
+    opened = operational_session_state(
+        datetime(2026, 8, 31, 7, 25, tzinfo=timezone.utc),
+        calendar_code="XETRA_REGULAR", market_timezone="Europe/Berlin",
+        session_open=time(9), session_close=time(17, 30),
+    )
+    holiday = operational_session_state(
+        datetime(2026, 12, 25, 10, 0, tzinfo=timezone.utc),
+        calendar_code="XETRA_REGULAR", market_timezone="Europe/Berlin",
+        session_open=time(9), session_close=time(17, 30),
+        holidays={date(2026, 12, 25): None},
+    )
+    assert before.reason == "BEFORE_REGULAR_SESSION"
+    assert grace.status == "OPEN_GRACE"
+    assert opened.should_receive_data
+    assert holiday.reason == "MARKET_HOLIDAY"
+
+
+def test_stale_data_only_warns_when_session_should_be_producing() -> None:
+    now = datetime(2026, 8, 31, 8, 0, tzinfo=timezone.utc)
+    latest = datetime(2026, 8, 28, 20, 55, tzinfo=timezone.utc)
+    closed = operational_session_state(
+        datetime(2026, 8, 30, 7, 0, tzinfo=timezone.utc),
+        calendar_code="FX_24X5", market_timezone="UTC", session_open=None, session_close=None,
+    )
+    opened = operational_session_state(
+        now, calendar_code="FX_24X5", market_timezone="UTC",
+        session_open=None, session_close=None,
+    )
+    assert not market_data_stale(
+        latest, now_utc=now, session=closed, freshness=timedelta(minutes=15),
+    )
+    assert market_data_stale(
+        latest, now_utc=now, session=opened, freshness=timedelta(minutes=15),
     )
 
 

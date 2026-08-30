@@ -12,6 +12,7 @@ from app.config import Settings
 from app.database import open_database
 from app.daily_progress_report import send_due_daily_progress_reports
 from app.email_delivery import send_email
+from app.market_calendar import market_data_stale, operational_session_state
 
 logger = logging.getLogger("aurex.health_monitor")
 
@@ -68,18 +69,39 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                         f"status={component['status']}; detail={component['status_detail']}; checked={checked}",
                     ))
             cursor.execute(
-                """SELECT m.symbol,MAX(c.open_time_utc) latest
+                """SELECT m.symbol,m.calendar_code,m.market_timezone,m.session_open_local,
+                          m.session_close_local,MAX(c.open_time_utc) latest
                    FROM app.markets m LEFT JOIN app.candles c ON c.market_id=m.market_id
                      AND c.timeframe='M5' AND c.completed=1
-                   WHERE m.enabled=1 GROUP BY m.symbol"""
+                   WHERE m.enabled=1
+                   GROUP BY m.symbol,m.calendar_code,m.market_timezone,
+                            m.session_open_local,m.session_close_local"""
             )
             for market in cursor.fetchall():
                 latest = market["latest"]
-                if latest is None or latest < now - timedelta(hours=24):
+                cursor.execute(
+                    """SELECT holiday_date,session_close_local FROM app.market_holidays
+                       WHERE calendar_code=%s""", (str(market["calendar_code"]),),
+                )
+                holidays = {row["holiday_date"]: row["session_close_local"] for row in cursor.fetchall()}
+                session = operational_session_state(
+                    now.replace(tzinfo=timezone.utc),
+                    calendar_code=str(market["calendar_code"]),
+                    market_timezone=str(market["market_timezone"]),
+                    session_open=market["session_open_local"],
+                    session_close=market["session_close_local"],
+                    holidays=holidays,
+                )
+                if market_data_stale(
+                    latest, now_utc=now.replace(tzinfo=timezone.utc), session=session,
+                    freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),
+                ):
                     symbol = str(market["symbol"])
                     issues.append(HealthIssue(
-                        f"market.{symbol}.no_daily_data", "WARNING",
-                        f"No recent market data for {symbol}", f"latest_completed_m5={latest}",
+                        f"market.{symbol}.session_data_stale", "WARNING",
+                        f"No market data during the open session for {symbol}",
+                        f"latest_completed_m5={latest}; session_state={session.status}; "
+                        f"session_reason={session.reason}",
                     ))
     except Exception as exc:
         issues.append(HealthIssue("database.health_query", "CRITICAL", "Health database query failed",

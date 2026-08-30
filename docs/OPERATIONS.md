@@ -230,3 +230,23 @@ Safe output shows migration 027 present, zero demo attempts, demo/live disabled,
 and zero governed validated models until an exact holdout-passed artifact receives
 owner approval. Broker margin evidence should cover four markets after rule sync;
 `EDITS_ONLY` during a closed session remains non-tradeable.
+
+## Session-aware market-data monitoring
+
+Operational candle freshness uses the shared market calendar instead of elapsed
+wall-clock time:
+
+- FX feeds are expected from Sunday 21:00 UTC through Friday 21:00 UTC. The first
+  20 minutes after the Sunday reopen are a grace period.
+- Germany 40 uses `Europe/Berlin`, the configured Xetra 09:00–17:30 regular
+  session, the holiday table and the same 20-minute opening grace period.
+- Candle-age alerts are suppressed while a market is closed or in reopen grace.
+  Once the session is open, the configured M5 freshness limit applies.
+- API, owner-web, database, service-component, IG authentication, risk-engine and
+  worker-health checks remain active during market closures.
+
+Operational freshness is different from research completeness. Quality audits
+already count missing periods only inside configured regular sessions and record
+`recent_missing_period_count` separately. Historical warnings may therefore
+remain for bounded provider downloads or genuine gaps even when weekend alerts
+are correctly suppressed. Feature construction continues to reset at every gap.
