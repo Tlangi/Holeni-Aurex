@@ -11,7 +11,7 @@ from app.model_governance import feature_complete_rows
 from app.ig_demo import IGDemoClient, IGDemoUnavailable
 from app.forward_promotion import evaluate_forward_shadow
 from app.market_data import _midpoint, _timestamp
-from app.market_calendar import is_regular_session
+from app.market_calendar import is_regular_session, market_data_stale, operational_session_state
 
 
 def _persist_m5(settings: Settings, market_id: str, prices: list[dict[str, object]]) -> dict[str, int]:
@@ -299,8 +299,9 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
     platform = read_trading_readiness(settings, tenant_id)
     market_specific_checks = {
         "validated_models", "m5_market_data_current", "m15_aggregation_current",
-        "position_sizing_rules",
+        "position_sizing_rules", "demo_execution_opt_in",
     }
+    demo_execution_opt_in = bool(platform["checks"]["demo_execution_opt_in"]["ready"])
     platform_ready_without_models = all(
         check["ready"] for name, check in platform["checks"].items()
         if name not in market_specific_checks
@@ -308,7 +309,8 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
-            """SELECT m.market_id,m.symbol,m.display_name,
+            """SELECT m.market_id,m.symbol,m.display_name,m.calendar_code,m.market_timezone,
+                      m.session_open_local,m.session_close_local,
                       COUNT(c.candle_id) raw_rows,MIN(c.open_time_utc) earliest,MAX(c.open_time_utc) latest,
                       (SELECT TOP (1) q.overall_execution_quality FROM app.execution_quality_snapshots q
                        WHERE q.market_id=m.market_id ORDER BY q.evaluated_at_utc DESC) quality_status,
@@ -327,7 +329,8 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                  AND c.timeframe='M15' AND c.completed=1 AND c.quality_status='PASS'
                  AND c.is_regular_session=1
                LEFT JOIN app.market_execution_states es ON es.market_id=m.market_id AND es.tenant_id=%s
-               WHERE m.enabled=1 GROUP BY m.market_id,m.symbol,m.display_name,es.mode ORDER BY m.symbol""",
+               WHERE m.enabled=1 GROUP BY m.market_id,m.symbol,m.display_name,m.calendar_code,
+                 m.market_timezone,m.session_open_local,m.session_close_local,es.mode ORDER BY m.symbol""",
             (tenant_id,),
         )
         markets = cursor.fetchall()
@@ -396,14 +399,35 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
             now = datetime.now(timezone.utc)
             latest_m5 = freshness["latest_m5"]
             latest_m15 = freshness["latest_m15"]
-            m5_fresh = bool(latest_m5) and (now - latest_m5.replace(tzinfo=timezone.utc)).total_seconds() <= settings.execution_m5_fresh_seconds
-            m15_fresh = bool(latest_m15) and (now - latest_m15.replace(tzinfo=timezone.utc)).total_seconds() <= settings.execution_m15_fresh_seconds
-            quality_pass = row["quality_status"] == "PASS"
+            cursor.execute(
+                "SELECT holiday_date,session_close_local FROM app.market_holidays WHERE calendar_code=%s",
+                (str(row["calendar_code"]),),
+            )
+            holidays = {item["holiday_date"]: item["session_close_local"] for item in cursor.fetchall()}
+            session = operational_session_state(
+                now, calendar_code=str(row["calendar_code"]),
+                market_timezone=str(row["market_timezone"]),
+                session_open=row["session_open_local"], session_close=row["session_close_local"],
+                holidays=holidays,
+            )
+            m5_fresh = not market_data_stale(
+                latest_m5, now_utc=now, session=session,
+                freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),
+            )
+            m15_fresh = not market_data_stale(
+                latest_m15, now_utc=now, session=session,
+                freshness=timedelta(seconds=settings.execution_m15_fresh_seconds),
+            )
+            quality_pass = (
+                row["historical_quality"] == "PASS" and row["training_quality"] == "PASS"
+                and row["quality_status"] in {"PASS", "CLOSED", "OPEN_GRACE"}
+            )
             promotion = evaluate_forward_shadow(cursor, tenant_id, str(row["market_id"]))
             forward_shadow_passed = bool(promotion["passed"])
             market_ready = (
                 platform_ready_without_models and validated and forward_shadow_passed
                 and quality_pass and m5_fresh and m15_fresh and rule_current and combined_ready
+                and session.should_receive_data and demo_execution_opt_in
                 and row["execution_mode"] == "DEMO_AUTO"
             )
             result.append({
@@ -420,6 +444,8 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                 "training_status": "VALIDATED" if validated else "WAITING_FOR_DATA" if feature_rows < required else "REJECTED" if row["model_status"] == "REJECTED" else "READY_TO_TRAIN",
                 "model_status": row["model_status"] or "NONE", "model_version": row["model_version"],
                 "execution_mode": row["execution_mode"], "demo_auto_ready": market_ready,
+                "market_session": {"status": session.status, "reason": session.reason,
+                                   "data_expected_now": session.should_receive_data},
                 "forward_shadow": promotion,
                 "checks": {"sufficient_data": feature_rows >= required, "quality_pass": quality_pass,
                            "positive_expectancy": float(evaluation.get("expectancy") or 0) > 0,
@@ -427,9 +453,12 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                            "baseline_outperformance": bool(evaluation.get("baseline_outperformed")),
                            "validated_model": validated, "forward_shadow_promoted": forward_shadow_passed,
                            "m5_fresh": m5_fresh, "m15_fresh": m15_fresh,
+                           "market_session_open": True if session.should_receive_data else None,
                            "broker_rule_current": rule_current, "combined_decision_ready": combined_ready,
                            "combined_decision": combined_decision.get("decision") or "NONE",
                            "combined_decision_blocker": combined_decision.get("blocker_code"),
+                           "demo_execution_opt_in": demo_execution_opt_in
+                           if validated and forward_shadow_passed else None,
                            "platform_gates": platform_ready_without_models},
                 "validation_evidence": {
                     "result": evaluation.get("result"),

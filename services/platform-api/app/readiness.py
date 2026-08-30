@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from app.config import Settings
 from app.database import DatabaseUnavailable, check_database, open_database
+from app.market_calendar import market_data_stale, operational_session_state
 
 
 @dataclass(frozen=True)
@@ -30,10 +31,10 @@ def configuration_checks(settings: Settings) -> dict[str, ReadinessCheck]:
         ),
         "demo_execution_opt_in": ReadinessCheck(
             settings.demo_execution_configured,
-            "PASS" if settings.demo_execution_configured else "BLOCKED",
+            "PASS" if settings.demo_execution_configured else "DEFERRED",
             "Explicit demo execution opt-in is complete"
             if settings.demo_execution_configured
-            else "Requires TRADING_MODE=demo, ALLOW_DEMO_TRADING=true and complete IG demo credentials",
+            else "Demo execution opt-in remains intentionally disabled until a market completes model and forward-shadow qualification",
         ),
         "smtp_status_known": ReadinessCheck(
             settings.smtp_configured,
@@ -70,11 +71,13 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
         )
         components = {str(row["component_code"]): row for row in cursor.fetchall()}
         cursor.execute(
-            """SELECT m.symbol,
+            """SELECT m.symbol,m.calendar_code,m.market_timezone,m.session_open_local,
+                      m.session_close_local,
                       MAX(CASE WHEN c.timeframe='M5' AND c.completed=1 THEN c.open_time_utc END) latest_m5,
                       MAX(CASE WHEN c.timeframe='M15' AND c.completed=1 THEN c.open_time_utc END) latest_m15
                FROM app.markets m LEFT JOIN app.candles c ON c.market_id=m.market_id
-               WHERE m.enabled=1 GROUP BY m.symbol"""
+               WHERE m.enabled=1 GROUP BY m.symbol,m.calendar_code,m.market_timezone,
+                         m.session_open_local,m.session_close_local"""
         )
         markets = cursor.fetchall()
         cursor.execute(
@@ -134,16 +137,32 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
 
     now = datetime.now(timezone.utc)
     expected_markets = len(markets)
-    market_fresh = len(markets) == expected_markets and all(
-        row["latest_m5"] is not None
-        and (now - row["latest_m5"].replace(tzinfo=timezone.utc)).total_seconds() <= 15 * 60
-        for row in markets
-    )
-    m15_current = len(markets) == expected_markets and all(
-        row["latest_m15"] is not None
-        and (now - row["latest_m15"].replace(tzinfo=timezone.utc)).total_seconds() <= 30 * 60
-        for row in markets
-    )
+    session_rows: list[tuple[dict[str, object], object]] = []
+    with open_database(settings) as connection:
+        holiday_cursor = connection.cursor(as_dict=True)
+        for row in markets:
+            holiday_cursor.execute(
+                "SELECT holiday_date,session_close_local FROM app.market_holidays WHERE calendar_code=%s",
+                (str(row["calendar_code"]),),
+            )
+            holidays = {item["holiday_date"]: item["session_close_local"] for item in holiday_cursor.fetchall()}
+            session_rows.append((row, operational_session_state(
+                now, calendar_code=str(row["calendar_code"]),
+                market_timezone=str(row["market_timezone"]),
+                session_open=row["session_open_local"], session_close=row["session_close_local"],
+                holidays=holidays,
+            )))
+    market_fresh = bool(markets) and all(not market_data_stale(
+        row["latest_m5"], now_utc=now, session=session,
+        freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),
+    ) for row, session in session_rows)
+    m15_current = bool(markets) and all(not market_data_stale(
+        row["latest_m15"], now_utc=now, session=session,
+        freshness=timedelta(seconds=settings.execution_m15_fresh_seconds),
+    ) for row, session in session_rows)
+    open_markets = sum(int(session.should_receive_data) for _, session in session_rows)
+    deferred_markets = expected_markets - open_markets
+    session_detail = f"{open_markets} open; {deferred_markets} closed or in reopening grace"
     component_ok: Callable[[str], bool] = lambda code: (
         code in components and str(components[code]["status"]) == "CURRENT"
     )
@@ -151,8 +170,8 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
         "authenticated_owner": ReadinessCheck(bool(owner), "PASS" if owner else "FAIL", "Active tenant owner exists" if owner else "No active tenant owner"),
         "ig_demo_connected": ReadinessCheck(bool(account) and account["environment"] == "demo" and component_ok("ig_demo"), "PASS" if bool(account) and account["environment"] == "demo" and component_ok("ig_demo") else "BLOCKED", "Correct IG demo account is current" if bool(account) and account["environment"] == "demo" and component_ok("ig_demo") else "IG demo account is absent, stale or unhealthy"),
         "market_worker_current": ReadinessCheck(component_ok("market_feed"), "PASS" if component_ok("market_feed") else "BLOCKED", "Market worker reports current" if component_ok("market_feed") else "Market worker is not current"),
-        "m5_market_data_current": ReadinessCheck(market_fresh, "PASS" if market_fresh else "BLOCKED", f"All {expected_markets} M5 markets are current" if market_fresh else "One or more M5 markets are missing or stale"),
-        "m15_aggregation_current": ReadinessCheck(m15_current, "PASS" if m15_current else "BLOCKED", f"All {expected_markets} M15 markets are current" if m15_current else "One or more M15 markets are missing or stale"),
+        "m5_market_data_current": ReadinessCheck(market_fresh, "PASS" if market_fresh else "BLOCKED", f"M5 freshness is current for the operating session ({session_detail})" if market_fresh else "One or more open-session M5 markets are missing or stale"),
+        "m15_aggregation_current": ReadinessCheck(m15_current, "PASS" if m15_current else "BLOCKED", f"M15 freshness is current for the operating session ({session_detail})" if m15_current else "One or more open-session M15 markets are missing or stale"),
         "macro_intelligence_current": ReadinessCheck(component_ok("macro_intelligence") and macro_score_count == 4, "PASS" if component_ok("macro_intelligence") and macro_score_count == 4 else "BLOCKED", f"Current audited macro scores: {macro_score_count}/4 currencies"),
         "validated_models": ReadinessCheck(int(models.get("validated_models") or 0) >= 1, "PASS" if int(models.get("validated_models") or 0) >= 1 else "BLOCKED", f"Markets with a validated model: {int(models.get('validated_models') or 0)}/{expected_markets}; at least one is required for staged demo execution"),
         "active_risk_profile": ReadinessCheck(active_risk == 1, "PASS" if active_risk == 1 else "BLOCKED", f"Active risk profiles: {active_risk}"),
@@ -185,5 +204,8 @@ def read_trading_readiness(settings: Settings, tenant_id: str) -> dict[str, obje
         "execution_mode": "DEMO_AUTO" if ready else "SHADOW_OR_PAUSED",
         "evaluated_at_utc": datetime.now(timezone.utc).isoformat(),
         "checks": {name: asdict(item) for name, item in checks.items()},
-        "blockers": [item.detail for item in checks.values() if not item.ready],
+        "blockers": [item.detail for item in checks.values()
+                     if not item.ready and item.status != "DEFERRED"],
+        "deferred_activation": [item.detail for item in checks.values()
+                                if not item.ready and item.status == "DEFERRED"],
     }

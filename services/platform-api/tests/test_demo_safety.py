@@ -28,7 +28,9 @@ def safe_settings(**overrides: object) -> Settings:
 def test_demo_execution_requires_explicit_opt_in() -> None:
     settings = safe_settings(allow_demo_trading=False)
     assert settings.demo_execution_configured is False
-    assert configuration_checks(settings)["demo_execution_opt_in"].ready is False
+    check = configuration_checks(settings)["demo_execution_opt_in"]
+    assert check.ready is False
+    assert check.status == "DEFERRED"
 
 
 def test_demo_execution_configuration_can_pass() -> None:

@@ -10,7 +10,7 @@ import numpy as np
 
 from app.config import Settings
 from app.database import open_database
-from app.market_calendar import is_regular_session
+from app.market_calendar import is_regular_session, operational_session_state
 from app.research_regimes import REGIME_VERSION, market_session
 
 
@@ -136,8 +136,19 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
         markets = cursor.fetchall()
         for market in markets:
             market_id = str(market["market_id"])
-            cursor.execute("SELECT holiday_date FROM app.market_holidays WHERE calendar_code=%s", (market["calendar_code"],))
-            holidays = {row["holiday_date"] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT holiday_date,session_close_local FROM app.market_holidays WHERE calendar_code=%s",
+                (market["calendar_code"],),
+            )
+            holiday_rows = cursor.fetchall()
+            holidays = {row["holiday_date"] for row in holiday_rows}
+            holiday_schedule = {row["holiday_date"]: row["session_close_local"] for row in holiday_rows}
+            session = operational_session_state(
+                now, calendar_code=str(market["calendar_code"]),
+                market_timezone=str(market["market_timezone"]),
+                session_open=market["session_open_local"], session_close=market["session_close_local"],
+                holidays=holiday_schedule,
+            )
             statuses: dict[str, list[str]] = {"DUKASCOPY": [], "IG": []}
             ig_latest: dict[str, dict[str, object]] = {}
             for provider, pattern, purpose in (
@@ -205,8 +216,12 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
             recent_gaps = len(m5.get("recent_gaps") or []) + len(m15.get("recent_gaps") or [])
             historical = "PASS" if statuses["DUKASCOPY"] and all(value == "PASS" for value in statuses["DUKASCOPY"]) else "WARN"
             training = historical
-            recent_continuity = "PASS" if m5_fresh and m15_fresh and recent_gaps == 0 else "FAIL"
-            price_freshness = "PASS" if bid_fresh and ask_fresh and spread_fresh else "FAIL"
+            if session.should_receive_data:
+                recent_continuity = "PASS" if m5_fresh and m15_fresh and recent_gaps == 0 else "FAIL"
+                price_freshness = "PASS" if bid_fresh and ask_fresh and spread_fresh else "FAIL"
+            else:
+                recent_continuity = session.status
+                price_freshness = session.status
             cursor.execute(
                 """SELECT COUNT(*) boundary_count FROM app.data_quality_gaps
                    WHERE market_id=%s AND classification='EXPECTED_PROVIDER_BOUNDARY' AND resolved_at_utc IS NULL""",
@@ -215,13 +230,20 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
             cross_provider = "KNOWN_GAP" if int(cursor.fetchone()["boundary_count"] or 0) else "PASS"
             session_valid = bool(m5_row and m5_row.get("is_regular_session"))
             latest_complete = bool(m5_row and m5_row.get("completed"))
-            overall = "PASS" if all((m5_fresh, m15_fresh, bid_fresh, ask_fresh, spread_fresh,
-                                      rules_fresh, session_valid, latest_complete, recent_gaps == 0)) else "FAIL"
+            if not session.should_receive_data:
+                overall = session.status
+            else:
+                overall = "PASS" if all((m5_fresh, m15_fresh, bid_fresh, ask_fresh, spread_fresh,
+                                          rules_fresh, session_valid, latest_complete, recent_gaps == 0)) else "FAIL"
             reasons = {
                 "m5_latest_utc": latest_m5.isoformat() if latest_m5 else None,
                 "m15_latest_utc": latest_m15.isoformat() if latest_m15 else None,
                 "known_provider_boundary_is_execution_blocking": False,
                 "features_reset_at_boundaries": True,
+                "session_status": session.status,
+                "session_reason": session.reason,
+                "data_expected_now": session.should_receive_data,
+                "freshness_is_execution_blocking_now": session.should_receive_data,
             }
             cursor.execute(
                 """INSERT app.execution_quality_snapshots

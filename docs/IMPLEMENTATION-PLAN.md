@@ -653,3 +653,21 @@ job UX. USD/JPY research remains development-only until those controls are done.
 - Recalculation on 30 August 2026 returned `PASS` for M5 and M15 on EUR/USD,
   GBP/USD, USD/JPY and Germany 40. Real corrupt candles and recent gaps inside a
   provider segment still fail or warn; no candles were manufactured or removed.
+
+## 23. Readiness blocker normalization
+
+- Global and market-specific freshness checks now use each market's operational
+  calendar. A closed market or reopening grace period is reported as `CLOSED` or
+  `OPEN_GRACE`, not as failed continuity or stale execution pricing.
+- Raw freshness flags remain factual and broker execution still requires an open
+  session. Calendar deferral therefore cannot make an order executable.
+- Historical and training quality currently pass for all four markets; the most
+  recent audit contains zero invalid OHLC, non-positive, future, partial or recent
+  missing candles.
+- Demo execution opt-in remains disabled and is reported separately as a deferred
+  activation step. It becomes an actionable gate only after a market has a
+  governed validated model and passes forward-shadow promotion.
+- The sole active platform development blocker is now model validation (`0/4`).
+  Candidate training uses development history. Forward shadow evidence begins
+  only after a frozen candidate passes governance and holdout acceptance; shadow
+  observations do not train or repair a rejected candidate.
