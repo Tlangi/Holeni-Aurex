@@ -645,5 +645,11 @@ job UX. USD/JPY research remains development-only until those controls are done.
 - Infrastructure, API, authentication and worker failures remain monitored at
   all times; market closure suppresses only the data-age symptom.
 - Existing calendar-aware quality audits were verified: the current weekend has
-  zero recent missing periods. Remaining historical warnings describe provider
-  coverage gaps, not closed-market time.
+  zero recent missing periods.
+- Combined quality validation now groups candles by provider family. Declared
+  Dukascopy-to-IG boundaries are excluded from missing-period status while the
+  provider-specific `app.data_quality_segments` records remain the authoritative
+  98.5% historical-completeness gate.
+- Recalculation on 30 August 2026 returned `PASS` for M5 and M15 on EUR/USD,
+  GBP/USD, USD/JPY and Germany 40. Real corrupt candles and recent gaps inside a
+  provider segment still fail or warn; no candles were manufactured or removed.

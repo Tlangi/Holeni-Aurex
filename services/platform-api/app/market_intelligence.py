@@ -121,6 +121,29 @@ def aggregate_m15_history(settings: Settings, market_id: str) -> int:
     return inserted
 
 
+def _provider_family(source: object) -> str:
+    value = str(source or "UNKNOWN").upper()
+    if value.startswith("DUKASCOPY"):
+        return "DUKASCOPY"
+    if value.startswith("IG"):
+        return "IG"
+    return value
+
+
+def _combined_validation_status(*, failures: int, recent_missing: int) -> str:
+    """Classify the combined view without treating provider boundaries as defects.
+
+    Provider-specific historical completeness is governed by
+    ``app.data_quality_segments``. This combined diagnostic still blocks corrupt
+    candles and warns about interruptions inside the currently observed ranges.
+    """
+    if failures:
+        return "FAIL"
+    if recent_missing:
+        return "WARN"
+    return "PASS"
+
+
 def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> dict[str, object]:
     minutes = 5 if timeframe == "M5" else 15
     with open_database(settings) as connection:
@@ -138,29 +161,39 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
         )
         holidays = {row["holiday_date"] for row in cursor.fetchall()}
         cursor.execute(
-            """SELECT open_time_utc,close_time_utc,[open],high,low,[close],completed
+            """SELECT open_time_utc,close_time_utc,[open],high,low,[close],completed,source
                FROM app.candles WHERE market_id=%s AND timeframe=%s ORDER BY open_time_utc""",
             (market_id, timeframe),
         )
         rows = cursor.fetchall()
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         invalid = nonpositive = future = partial = missing = recent_missing = observed_regular = 0
-        previous = None
         recent_cutoff = now - timedelta(hours=24)
+        provider_rows: dict[str, list[dict[str, object]]] = {}
         for row in rows:
             values = [Decimal(str(row[name])) for name in ("open", "high", "low", "close")]
             invalid += int(values[1] < max(values[0], values[3]) or values[2] > min(values[0], values[3]))
             nonpositive += int(any(value <= 0 for value in values))
             future += int(row["open_time_utc"] > now)
             partial += int(not row["completed"] or row["close_time_utc"] <= row["open_time_utc"])
-            observed_regular += int(is_regular_session(
+            if is_regular_session(
                 row["open_time_utc"].replace(tzinfo=timezone.utc),
                 calendar_code=str(schedule["calendar_code"]),
                 market_timezone=str(schedule["market_timezone"]),
                 session_open=schedule["session_open_local"],
                 session_close=schedule["session_close_local"], holidays=holidays,
-            ))
-            if previous is not None:
+            ):
+                observed_regular += 1
+                provider_rows.setdefault(_provider_family(row["source"]), []).append(row)
+
+        provider_diagnostics: dict[str, dict[str, object]] = {}
+        for provider, segment in provider_rows.items():
+            segment_missing = segment_recent_missing = 0
+            previous = None
+            for row in segment:
+                if previous is None:
+                    previous = row["open_time_utc"]
+                    continue
                 candidate = previous + timedelta(minutes=minutes)
                 while candidate < row["open_time_utc"]:
                     if is_regular_session(
@@ -171,16 +204,21 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
                         session_close=schedule["session_close_local"], holidays=holidays,
                     ):
                         missing += 1
-                        recent_missing += int(candidate >= recent_cutoff)
+                        segment_missing += 1
+                        is_recent = int(candidate >= recent_cutoff)
+                        recent_missing += is_recent
+                        segment_recent_missing += is_recent
                     candidate += timedelta(minutes=minutes)
-            previous = row["open_time_utc"]
+                previous = row["open_time_utc"]
+            provider_diagnostics[provider] = {
+                "observed_regular_count": len(segment),
+                "missing_period_count": segment_missing,
+                "recent_missing_period_count": segment_recent_missing,
+            }
         failures = invalid + nonpositive + future + partial
         expected_regular = observed_regular + missing
         completeness = observed_regular / expected_regular if expected_regular else 0.0
-        # Sparse, old provider gaps are isolated by the feature pipeline and may
-        # remain usable. Any recent gap or material historical incompleteness is
-        # still fail-closed for market promotion.
-        status = "FAIL" if failures else "WARN" if recent_missing or completeness < 0.985 else "PASS"
+        status = _combined_validation_status(failures=failures, recent_missing=recent_missing)
         result = {
             "candle_count": len(rows), "duplicate_count": 0, "missing_period_count": missing,
             "recent_missing_period_count": recent_missing,
@@ -205,7 +243,10 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
                          "regular_session_observed_count": observed_regular,
                          "regular_session_completeness": round(completeness, 8),
                          "minimum_historical_completeness": 0.985,
-                         "features_segmented_at_gaps": True})),
+                         "features_segmented_at_gaps": True,
+                         "provider_boundaries_excluded_from_status": True,
+                         "historical_quality_authority": "app.data_quality_segments",
+                         "provider_diagnostics": provider_diagnostics})),
         )
         connection.commit()
     return result
