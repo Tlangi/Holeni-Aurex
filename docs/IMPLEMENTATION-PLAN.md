@@ -21,7 +21,9 @@ Older status statements are indexed in
   remained after causal/session filtering. Reservation now validates both the
   2,000-row development floor and 500-row causal holdout floor before sealing a
   lineage. Validated bounded Dukascopy recovery raised regular-session M15
-  inventory to 5,076 rows, but no chronological split yet satisfies both floors.
+  inventory to 5,110 rows. The best current 20% split contains 1,920 eligible
+  development rows and 472 causal holdout rows, so neither floor is weakened and
+  no new lineage has been reserved.
 - Drift snapshot writers and alerts are active. Until a model is approved they
   correctly record `MODEL_UNAVAILABLE`, not fabricated drift scores.
 - Point-in-time economic-event vintages are stored when scheduled events are
