@@ -48,6 +48,23 @@ def _token_hash(token: str) -> bytes:
     return sha256(token.encode("utf-8")).digest()
 
 
+def _attempt_hash(settings: Settings, value: str) -> bytes:
+    pepper = settings.auth_hash_pepper or settings.sql_database
+    return sha256(f"{pepper}:{value.strip().lower()}".encode("utf-8")).digest()
+
+
+def _rate_limit_exceeded(settings: Settings, email_failures: int, address_failures: int) -> bool:
+    return (email_failures >= settings.auth_max_email_failures or
+            address_failures >= settings.auth_max_address_failures)
+
+
+def _account_locked(value: datetime | None) -> bool:
+    if value is None:
+        return False
+    locked_until = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return locked_until > datetime.now(timezone.utc)
+
+
 def _audit(
     cursor: object,
     *,
@@ -77,10 +94,29 @@ def login_owner(
     correlation_id = getattr(request.state, "correlation_id", str(uuid4()))
     with open_database(settings) as connection:
         cursor = connection.cursor()
+        email_hash = _attempt_hash(settings, credentials.email)
+        address_hash = _attempt_hash(settings, request.client.host if request.client else "unknown")
+        cursor.execute(
+            """SELECT
+                 SUM(CASE WHEN email_hash=%s AND succeeded=0 THEN 1 ELSE 0 END),
+                 SUM(CASE WHEN remote_address_hash=%s AND succeeded=0 THEN 1 ELSE 0 END)
+               FROM app.authentication_attempts
+               WHERE attempted_at_utc>=DATEADD(minute,-%s,SYSUTCDATETIME())""",
+            (email_hash, address_hash, settings.auth_failure_window_minutes),
+        )
+        attempts = cursor.fetchone() or (0, 0)
+        if _rate_limit_exceeded(
+            settings, int(attempts[0] or 0), int(attempts[1] or 0),
+        ):
+            _audit(cursor, action="auth.login.rate_limited", correlation_id=correlation_id,
+                   metadata='{"reason":"attempt_window_exceeded"}')
+            connection.commit()
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail="Sign-in is temporarily unavailable. Try again later.")
         cursor.execute(
             """
             SELECT TOP (1) user_id, tenant_id, email, display_name, role,
-                           status, password_hash
+                           status, password_hash,locked_until_utc,failed_login_count,mfa_required
             FROM app.users
             WHERE LOWER(email)=LOWER(%s);
             """,
@@ -94,7 +130,22 @@ def login_owner(
         except (VerifyMismatchError, InvalidHashError):
             verified = False
 
-        if not row or not verified or row[5] != "active":
+        locked = bool(row and _account_locked(row[7]))
+        if not row or not verified or row[5] != "active" or locked:
+            cursor.execute(
+                """INSERT app.authentication_attempts
+                     (authentication_attempt_id,email_hash,remote_address_hash,succeeded,failure_code)
+                   VALUES(%s,%s,%s,0,%s)""",
+                (str(uuid4()), email_hash, address_hash, "ACCOUNT_LOCKED" if locked else "INVALID_CREDENTIALS"),
+            )
+            if row:
+                cursor.execute(
+                    """UPDATE app.users SET failed_login_count=failed_login_count+1,
+                         locked_until_utc=CASE WHEN failed_login_count+1>=%s
+                           THEN DATEADD(minute,%s,SYSUTCDATETIME()) ELSE locked_until_utc END
+                       WHERE user_id=%s""",
+                    (settings.auth_max_email_failures, settings.auth_lockout_minutes, str(row[0])),
+                )
             _audit(
                 cursor,
                 action="auth.login.failed",
@@ -115,6 +166,16 @@ def login_owner(
             role=row[4],
         )
         raw_token = secrets.token_urlsafe(48)
+        if bool(row[9]):
+            cursor.execute(
+                """INSERT app.authentication_attempts
+                     (authentication_attempt_id,email_hash,remote_address_hash,succeeded,failure_code)
+                   VALUES(%s,%s,%s,0,'MFA_REQUIRED')""",
+                (str(uuid4()), email_hash, address_hash),
+            )
+            connection.commit()
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="MFA enrollment is required before this account can sign in")
         expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.session_hours)
         cursor.execute(
             """
@@ -133,8 +194,12 @@ def login_owner(
             ),
         )
         cursor.execute(
-            "UPDATE app.users SET last_login_at_utc=SYSUTCDATETIME() WHERE user_id=%s;",
-            (user.user_id,),
+            """UPDATE app.users SET last_login_at_utc=SYSUTCDATETIME(),failed_login_count=0,
+                      locked_until_utc=NULL WHERE user_id=%s;
+               INSERT app.authentication_attempts
+                 (authentication_attempt_id,email_hash,remote_address_hash,succeeded,failure_code)
+               VALUES(%s,%s,%s,1,NULL);""",
+            (user.user_id, str(uuid4()), email_hash, address_hash),
         )
         _audit(
             cursor,

@@ -240,6 +240,45 @@ def _ensure_sources(cursor: object) -> dict[str, str]:
     return identifiers
 
 
+def _backfill_point_in_time_event_snapshots(cursor: object) -> int:
+    """Preserve existing scheduled evidence as immutable retrieval-time vintages."""
+    cursor.execute(
+        """SELECT e.macro_evidence_id,s.source_code,e.external_key,s.currency,
+                  e.scheduled_event_at_utc,e.impact,e.classification,e.title,e.canonical_url,
+                  e.published_at_utc,e.retrieved_at_utc,e.content_sha256
+           FROM app.macro_evidence e JOIN app.macro_sources s ON s.macro_source_id=e.macro_source_id
+           WHERE e.scheduled_event_at_utc IS NOT NULL"""
+    )
+    inserted = 0
+    for item in cursor.fetchall():
+        payload = json.dumps({
+            "title": item["title"], "canonical_url": item["canonical_url"],
+            "scheduled_event_at_utc": item["scheduled_event_at_utc"].isoformat(),
+            "published_at_utc": item["published_at_utc"].isoformat()
+            if item.get("published_at_utc") else None,
+            "retrieved_at_utc": item["retrieved_at_utc"].isoformat(),
+            "impact": item["impact"], "classification": item["classification"],
+            "source_content_sha256": item["content_sha256"], "backfilled": True,
+        }, sort_keys=True)
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        cursor.execute(
+            """IF NOT EXISTS(SELECT 1 FROM app.economic_event_snapshots
+               WHERE source_code=%s AND external_key=%s AND retrieved_at_utc=%s AND payload_sha256=%s)
+               INSERT app.economic_event_snapshots
+                 (economic_event_snapshot_id,macro_evidence_id,source_code,external_key,currency,
+                  event_at_utc,impact,classification,title,retrieved_at_utc,available_from_utc,
+                  payload_sha256,payload_json)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (item["source_code"], item["external_key"], item["retrieved_at_utc"], digest,
+             str(uuid4()), str(item["macro_evidence_id"]), item["source_code"], item["external_key"],
+             item["currency"], item["scheduled_event_at_utc"], item["impact"],
+             item["classification"], item["title"], item["retrieved_at_utc"],
+             item["retrieved_at_utc"], digest, payload),
+        )
+        inserted += max(0, int(cursor.rowcount or 0))
+    return inserted
+
+
 def sync_official_macro_sources(settings: Settings, *, session: requests.Session | None = None) -> dict[str, object]:
     if not settings.macro_intelligence_enabled:
         return {"status": "disabled", "sources": [], "evidence_inserted": 0}
@@ -252,6 +291,7 @@ def sync_official_macro_sources(settings: Settings, *, session: requests.Session
         with open_database(settings) as connection:
             cursor = connection.cursor(as_dict=True)
             source_ids = _ensure_sources(cursor)
+            snapshot_backfill = _backfill_point_in_time_event_snapshots(cursor)
             connection.commit()
             for source in DEFAULT_SOURCES:
                 source_id = source_ids[source.code]
@@ -268,18 +308,53 @@ def sync_official_macro_sources(settings: Settings, *, session: requests.Session
                     items = _rss_items(payload, source, now) if source.parser_kind == "RSS" else _html_item(payload, source, now)
                     for item in items:
                         content_hash = hashlib.sha256(str(item["excerpt"]).encode()).hexdigest()
+                        evidence_id = str(uuid4())
                         cursor.execute(
                             """IF NOT EXISTS(SELECT 1 FROM app.macro_evidence WHERE macro_source_id=%s AND external_key=%s AND content_sha256=%s)
                                INSERT app.macro_evidence(macro_evidence_id,macro_source_id,external_key,title,canonical_url,
                                  published_at_utc,retrieved_at_utc,content_sha256,content_excerpt,classification,currency_score,
                                  impact,scheduled_event_at_utc,parser_version,metadata_json)
                                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                            (source_id, item["external_key"], content_hash, str(uuid4()), source_id,
+                            (source_id, item["external_key"], content_hash, evidence_id, source_id,
                              item["external_key"], item["title"], item["url"], item["published"], now,
                              content_hash, item["excerpt"], item["classification"], item["score"], item["impact"],
                              item["scheduled"], PARSER_VERSION, json.dumps({"source_code": source.code})),
                         )
                         inserted += max(0, int(cursor.rowcount or 0))
+                        cursor.execute(
+                            """SELECT TOP (1) macro_evidence_id FROM app.macro_evidence
+                               WHERE macro_source_id=%s AND external_key=%s AND content_sha256=%s
+                               ORDER BY retrieved_at_utc DESC""",
+                            (source_id, item["external_key"], content_hash),
+                        )
+                        stored_evidence = cursor.fetchone()
+                        if item.get("scheduled") and stored_evidence:
+                            snapshot = {
+                                "title": item["title"], "canonical_url": item["url"],
+                                "scheduled_event_at_utc": item["scheduled"].isoformat(),
+                                "published_at_utc": item["published"].isoformat()
+                                if item.get("published") else None,
+                                "retrieved_at_utc": now.isoformat(), "impact": item["impact"],
+                                "classification": item["classification"],
+                                "currency_score": item["score"], "parser_version": PARSER_VERSION,
+                            }
+                            snapshot_json = json.dumps(snapshot, sort_keys=True)
+                            snapshot_hash = hashlib.sha256(snapshot_json.encode()).hexdigest()
+                            cursor.execute(
+                                """IF NOT EXISTS(SELECT 1 FROM app.economic_event_snapshots
+                                   WHERE source_code=%s AND external_key=%s AND retrieved_at_utc=%s
+                                     AND payload_sha256=%s)
+                                   INSERT app.economic_event_snapshots
+                                     (economic_event_snapshot_id,macro_evidence_id,source_code,external_key,
+                                      currency,event_at_utc,impact,classification,title,retrieved_at_utc,
+                                      available_from_utc,payload_sha256,payload_json)
+                                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                (source.code, item["external_key"], now, snapshot_hash, str(uuid4()),
+                                 str(stored_evidence["macro_evidence_id"]), source.code,
+                                 item["external_key"], source.currency, item["scheduled"],
+                                 item["impact"], item["classification"], item["title"], now, now,
+                                 snapshot_hash, snapshot_json),
+                            )
                     cursor.execute(
                         """UPDATE app.macro_sources SET last_attempt_at_utc=%s,last_success_at_utc=%s,
                            last_http_status=%s,last_error_code=NULL,etag=%s,last_modified=%s,updated_at_utc=SYSUTCDATETIME()
@@ -310,7 +385,8 @@ def sync_official_macro_sources(settings: Settings, *, session: requests.Session
                 (component_status, f"Official sources current: {successful}/{len(outcomes)}; evidence inserted: {inserted}"[:300]),
             )
             connection.commit()
-        return {"status": component_status, "sources": outcomes, "evidence_inserted": inserted, "scores": scores}
+        return {"status": component_status, "sources": outcomes, "evidence_inserted": inserted,
+                "event_snapshots_backfilled": snapshot_backfill, "scores": scores}
     finally:
         if owned:
             http.close()
@@ -500,6 +576,13 @@ def read_macro_status(settings: Settings, tenant_id: str) -> dict[str, object]:
                      WHERE d.tenant_id=%s) ranked WHERE rn=1 ORDER BY symbol""", (tenant_id,),
         )
         decisions = cursor.fetchall()
+        cursor.execute(
+            """SELECT TOP (50) source_code,external_key,currency,event_at_utc,impact,
+                      classification,title,retrieved_at_utc,available_from_utc,payload_sha256
+               FROM app.economic_event_snapshots
+               ORDER BY event_at_utc DESC,retrieved_at_utc DESC"""
+        )
+        event_snapshots = cursor.fetchall()
     def iso(value: object) -> str | None:
         return value.replace(tzinfo=timezone.utc).isoformat() if isinstance(value, datetime) else None
     return {
@@ -518,5 +601,13 @@ def read_macro_status(settings: Settings, tenant_id: str) -> dict[str, object]:
                        "combined_score": str(row["combined_score"]), "confidence": str(row["confidence"]),
                        "executable": bool(row["executable"]), "blocker": row["blocker_code"],
                        "evidence": json.loads(row["evidence_json"]), "generated_at_utc": iso(row["generated_at_utc"])} for row in decisions],
+        "event_snapshots": [{"source_code": row["source_code"], "external_key": row["external_key"],
+                             "currency": row["currency"], "event_at_utc": iso(row["event_at_utc"]),
+                             "impact": row["impact"], "classification": row["classification"],
+                             "title": row["title"], "retrieved_at_utc": iso(row["retrieved_at_utc"]),
+                             "available_from_utc": iso(row["available_from_utc"]),
+                             "payload_sha256": row["payload_sha256"]} for row in event_snapshots],
+        "event_regime_enabled": False,
+        "event_regime_blocker": "REQUIRES_SUFFICIENT_POINT_IN_TIME_SNAPSHOT_HISTORY",
         "execution_authority": "DETERMINISTIC_RISK_ENGINE",
     }

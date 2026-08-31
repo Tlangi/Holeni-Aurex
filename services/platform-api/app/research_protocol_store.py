@@ -191,8 +191,23 @@ def read_protocol_status(settings: Settings, tenant_id: str) -> dict[str, object
         )
         lifecycle = [{key: (value.isoformat() if isinstance(value, datetime) else value)
                       for key, value in row.items()} for row in cursor.fetchall()]
+        cursor.execute(
+            """SELECT l.research_lineage_id,m.symbol,l.hypothesis,l.model_families_json,
+                      l.status,l.development_start_utc,l.development_end_utc,l.holdout_start_utc,
+                      l.holdout_end_utc,l.created_at_utc,s.target_mode,s.horizon_bars,s.target_sha256
+               FROM app.research_lineages l JOIN app.markets m ON m.market_id=l.market_id
+               LEFT JOIN app.research_target_specs s
+                 ON s.research_target_spec_id=l.research_target_spec_id
+               WHERE l.tenant_id=%s ORDER BY l.created_at_utc DESC""", (tenant_id,),
+        )
+        lineages = []
+        for row in cursor.fetchall():
+            item = {key: (value.isoformat() if isinstance(value, datetime) else value)
+                    for key, value in row.items() if key != "model_families_json"}
+            item["model_families"] = json.loads(row["model_families_json"])
+            lineages.append(item)
     return {"protocol_version": PROTOCOL_VERSION, "target_specifications": specifications,
-            "lifecycle_events": lifecycle, "execution_enabled": False,
+            "lifecycle_events": lifecycle, "lineages": lineages, "execution_enabled": False,
             "holdout_policy": "UNTOUCHED_UNTIL_EXPLICIT_SINGLE_USE_REVIEW"}
 
 

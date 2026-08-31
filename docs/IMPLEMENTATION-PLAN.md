@@ -1,5 +1,48 @@
 # Forex SaaS implementation plan
 
+## Authoritative current status — 31 August 2026
+
+This section is the current source of truth. The numbered delivery record below
+is retained as implementation history and must not be read as current readiness.
+Older status statements are indexed in
+`docs/archive/IMPLEMENTATION-HISTORY-2026-08.md`.
+
+- Owner-only localhost platform, SQL, IG streaming, API, web and background
+  workers are operational. Live trading and third-party funds remain absent.
+- Historical/training quality passes for all four enabled markets. Provider
+  boundaries are explicit and no missing prices are manufactured.
+- Selective Research V4 now binds target, lineage, tournament winner, calibrated
+  multiclass artifact and single-use holdout evidence. No lineage or holdout is
+  automatically created or consumed; those are owner research decisions.
+- Model approval remains `0/4`. Each market must independently pass its exact
+  development tournament, untouched holdout and frozen forward-shadow policy.
+- Drift snapshot writers and alerts are active. Until a model is approved they
+  correctly record `MODEL_UNAVAILABLE`, not fabricated drift scores.
+- Point-in-time economic-event vintages are stored when scheduled events are
+  retrieved. Event/risk-on regimes remain disabled until sufficient audited
+  vintages exist.
+- Quarantine and bounded recovery evidence is available through authenticated
+  API and Research UI views. Recovery remains session-aware and synthetic fills
+  remain prohibited.
+- Authentication throttling and account lockout are implemented. MFA enrollment
+  and verification, HTTPS, secure cookies and a real hash pepper remain mandatory
+  before a public-domain deployment.
+- Least-privilege SQL, encrypted off-server backup and retention operations are
+  supplied as guarded administrator procedures. They are not considered active
+  until separately configured, tested and evidenced on this server.
+
+### Current implementation order
+
+1. Owner selects a predeclared target and hypothesis per market, reserves an
+   immutable lineage, then runs a fresh lineage-bound boundary audit.
+2. Run the V4 development tournament and freeze only its exact passing winner.
+3. Consume the frozen candidate's untouched holdout once; owner approval can
+   enable only forward shadow.
+4. Accumulate the required frozen forward-shadow observations and monitor model,
+   feature and cost drift.
+5. Consider one non-retrying minimum-size IG Demo plumbing test only when that
+   specific market passes every gate. No live path is enabled.
+
 ## 1. Decisions and boundaries
 
 - Build a web platform, not a web wrapper around the existing bot.
@@ -629,10 +672,9 @@ global models and automatic holdout-to-validation promotion remain deferred.
 - Demo and live flags remain disabled. No holdout was consumed and no order was
   submitted during this tranche.
 
-Remaining P1 work includes compact research projections, dataset checksums,
-bootstrap uncertainty, drift alerts, richer session cost stress, SQL privilege
-separation, authentication rate limiting/lockout, and Angular lineage/approval/
-job UX. USD/JPY research remains development-only until those controls are done.
+This former P1 statement is superseded by the authoritative status at the top of
+this document. Its completed and deferred items are recorded in the August 2026
+implementation-history archive.
 
 ## 22. Session-aware monitoring correction
 
@@ -695,6 +737,7 @@ job UX. USD/JPY research remains development-only until those controls are done.
 
 Next evidence-dependent work is to reserve one explicit target-bound lineage per
 market, run the durable selective tournaments and freeze only a leader that
-passes every development gate. Point-in-time macro event regimes, drift alerts
-for an actually approved model and sustained forward-shadow evidence remain
-blocked until their prerequisite evidence exists.
+passes every development gate. Event regimes and sustained forward-shadow
+evidence remain blocked until their prerequisite evidence exists. Drift writers
+are active, but real drift scores necessarily require an approved model and
+post-approval observations.

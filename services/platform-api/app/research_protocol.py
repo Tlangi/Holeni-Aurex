@@ -214,8 +214,10 @@ def development_only_calibrated_probabilities(
     split = len(training) - calibration_rows
     fit = training.iloc[:max(0, split - horizon_bars)]
     calibration = training.iloc[split:]
-    if len(fit) < 300 or calibration["target"].nunique() < 2:
-        raise ValueError("Insufficient development-only calibration evidence")
+    required_classes = {0, 1, 2}
+    if (len(fit) < 300 or set(fit["target"].astype(int).unique()) != required_classes or
+            set(calibration["target"].astype(int).unique()) != required_classes):
+        raise ValueError("Development fit and calibration partitions must contain BUY, SELL and HOLD")
     estimator = estimator_factory()
     estimator.fit(fit[FEATURES], fit["target"].astype(int))
     calibrated = CalibratedClassifierCV(FrozenEstimator(estimator), method="sigmoid")
@@ -229,22 +231,48 @@ def development_only_calibrated_probabilities(
     }
 
 
-def selective_directions(
-    probabilities: np.ndarray, classes: np.ndarray, training: pd.DataFrame,
-    validation: pd.DataFrame, specification: TargetSpecification,
+def fit_selective_development_model(
+    estimator_factory: Callable[[], object], development: pd.DataFrame, *, horizon_bars: int,
+) -> tuple[object, dict[str, object]]:
+    """Fit and calibrate the final frozen model using development evidence only."""
+    calibration_rows = max(100, int(len(development) * 0.20))
+    split = len(development) - calibration_rows
+    fit = development.iloc[:max(0, split - horizon_bars)]
+    calibration = development.iloc[split:]
+    required_classes = {0, 1, 2}
+    if (len(fit) < 300 or set(fit["target"].astype(int).unique()) != required_classes or
+            set(calibration["target"].astype(int).unique()) != required_classes):
+        raise ValueError("Development fit and calibration partitions must contain BUY, SELL and HOLD")
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.frozen import FrozenEstimator
+
+    estimator = estimator_factory()
+    estimator.fit(fit[FEATURES], fit["target"].astype(int))
+    calibrated = CalibratedClassifierCV(FrozenEstimator(estimator), method="sigmoid")
+    calibrated.fit(calibration[FEATURES], calibration["target"].astype(int))
+    buy_moves = development.loc[development["target"] == 1, "future_return"].abs() * 10000
+    sell_moves = development.loc[development["target"] == 2, "future_return"].abs() * 10000
+    return calibrated, {
+        "fit_rows": len(fit), "calibration_rows": len(calibration),
+        "calibration_start": calibration.index.min().isoformat(),
+        "calibration_end": calibration.index.max().isoformat(),
+        "validation_used_for_calibration": False,
+        "buy_move_bps": float(buy_moves.median()) if len(buy_moves) else None,
+        "sell_move_bps": float(sell_moves.median()) if len(sell_moves) else None,
+    }
+
+
+def selective_directions_from_edges(
+    probabilities: np.ndarray, classes: np.ndarray, validation: pd.DataFrame,
+    specification: TargetSpecification, *, buy_move_bps: float, sell_move_bps: float,
 ) -> tuple[np.ndarray, list[dict[str, float | str]]]:
     class_index = {int(value): index for index, value in enumerate(classes)}
     hold_p = probabilities[:, class_index[0]] if 0 in class_index else np.zeros(len(probabilities))
     buy_p = probabilities[:, class_index[1]] if 1 in class_index else np.zeros(len(probabilities))
     sell_p = probabilities[:, class_index[2]] if 2 in class_index else np.zeros(len(probabilities))
-    buy_moves = training.loc[training["target"] == 1, "future_return"].abs() * 10000
-    sell_moves = training.loc[training["target"] == 2, "future_return"].abs() * 10000
-    fallback = max(specification.minimum_edge_bps, float(training["atr_pct"].median()) * 10000)
-    buy_move = float(buy_moves.median()) if len(buy_moves) else fallback
-    sell_move = float(sell_moves.median()) if len(sell_moves) else fallback
     costs = validation["effective_cost_bps"].to_numpy(float) + specification.safety_buffer_bps
-    buy_edge = buy_p * buy_move - sell_p * sell_move - costs
-    sell_edge = sell_p * sell_move - buy_p * buy_move - costs
+    buy_edge = buy_p * buy_move_bps - sell_p * sell_move_bps - costs
+    sell_edge = sell_p * sell_move_bps - buy_p * buy_move_bps - costs
     directions = np.where(
         (buy_p > sell_p) & (buy_p > hold_p) & (buy_edge > 0), 1,
         np.where((sell_p > buy_p) & (sell_p > hold_p) & (sell_edge > 0), -1, 0),
@@ -258,6 +286,30 @@ def selective_directions(
         directions, buy_p, sell_p, hold_p, buy_edge, sell_edge, costs, strict=True,
     )]
     return directions.astype(int), explanations
+
+
+def selective_directions(
+    probabilities: np.ndarray, classes: np.ndarray, training: pd.DataFrame,
+    validation: pd.DataFrame, specification: TargetSpecification,
+) -> tuple[np.ndarray, list[dict[str, float | str]]]:
+    buy_moves = training.loc[training["target"] == 1, "future_return"].abs() * 10000
+    sell_moves = training.loc[training["target"] == 2, "future_return"].abs() * 10000
+    fallback = max(specification.minimum_edge_bps, float(training["atr_pct"].median()) * 10000)
+    buy_move = float(buy_moves.median()) if len(buy_moves) else fallback
+    sell_move = float(sell_moves.median()) if len(sell_moves) else fallback
+    return selective_directions_from_edges(
+        probabilities, classes, validation, specification,
+        buy_move_bps=buy_move, sell_move_bps=sell_move,
+    )
+
+
+def apply_ensemble_disagreement(model: object, features: pd.DataFrame, directions: np.ndarray) -> np.ndarray:
+    frozen = getattr(model, "estimator", None)
+    underlying = getattr(frozen, "estimator", frozen)
+    if underlying is not None and hasattr(underlying, "member_disagreement"):
+        directions = directions.copy()
+        directions[underlying.member_disagreement(features[FEATURES])] = 0
+    return directions
 
 
 def block_bootstrap_expectancy(
@@ -424,6 +476,7 @@ def selective_walk_forward_evaluate(
     p90 = next(item for item in stresses if item["scenario"] == "SPREAD_P90")
     gates = {
         "leakage_boundary_audit": bool(audit["passed"]),
+        "buy_sell_hold_class_coverage": set(np.unique(targets)) == {0, 1, 2},
         "minimum_trades": int(metrics["trade_count"] or 0) >= 30,
         "positive_aggregate_expectancy": float(metrics["expectancy"] or 0) > 0,
         "positive_window_majority": positive_windows / len(windows) >= 2 / 3,

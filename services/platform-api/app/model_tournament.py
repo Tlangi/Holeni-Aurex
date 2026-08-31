@@ -236,8 +236,10 @@ def run_and_record_selective_tournament(
             """SELECT TOP (1) passed,dataset_sha256,evaluated_at_utc
                FROM app.dataset_boundary_audits
                WHERE tenant_id=%s AND market_id=%s AND research_target_spec_id=%s
+                 AND research_lineage_id=%s
                ORDER BY evaluated_at_utc DESC""",
-            (tenant_id, market_id, str(lineage["research_target_spec_id"])),
+            (tenant_id, market_id, str(lineage["research_target_spec_id"]),
+             str(lineage["research_lineage_id"])),
         )
         audit = cursor.fetchone()
         if not audit or not bool(audit["passed"]):

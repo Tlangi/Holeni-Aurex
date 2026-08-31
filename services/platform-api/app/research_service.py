@@ -22,6 +22,7 @@ from app.replay_engine import ReplayRequest, run_replay
 from app.research_evidence import read_research_evidence, sync_cost_models, sync_quality_evidence
 from app.research_regimes import REGIME_VERSION, confidence_bucket, market_session, trend_regime, volatility_regimes
 from app.research_protocol_store import read_protocol_status
+from app.market_data_operations import read_market_data_operations
 
 
 DIAGNOSTIC_VERSION = "STRATEGY_DIAGNOSTICS_V1"
@@ -355,6 +356,7 @@ def read_research_status(settings: Settings, tenant_id: str, limit: int = 20) ->
             "required_feature_rows": readiness["required_feature_rows"], "markets": readiness["markets"],
             **evidence, "experiments": experiments, "holdout": read_holdout_status(settings, tenant_id),
             "selective_protocol": read_protocol_status(settings, tenant_id),
+            "data_operations": read_market_data_operations(settings),
             "holdout_policy": {"train": "model fitting", "validation": "configuration selection",
                                "holdout": "single final offline assessment; never tune against it",
                                "forward_shadow": "unseen real-time evidence after validation"}}

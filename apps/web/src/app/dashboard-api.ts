@@ -310,6 +310,23 @@ export interface ResearchStatusData {
     lifecycle_events: Array<{ candidate_lifecycle_event_id: string; symbol: string;
       from_state: string; to_state: string; transition_reason: string;
       evidence_sha256: string; changed_at_utc: string }>;
+    lineages: Array<{ research_lineage_id: string; symbol: string; hypothesis: string;
+      model_families: string[]; status: string; development_start_utc: string;
+      development_end_utc: string; holdout_start_utc: string; holdout_end_utc: string;
+      created_at_utc: string; target_mode: string; horizon_bars: number;
+      target_sha256: string }>;
+  };
+  data_operations: {
+    quarantine_summary: Record<string, number | undefined>;
+    recovery_summary: Record<string, number | undefined>;
+    quarantine: Array<{ market_data_quarantine_id: string; symbol: string; provider: string;
+      source_reference: string; source_row_number: number | null; rejection_code: string;
+      rejection_detail: string; status: string; observed_at_utc: string }>;
+    recovery_jobs: Array<{ market_data_recovery_job_id: string; symbol: string; timeframe: string;
+      gap_start_utc: string; gap_end_utc: string; maximum_requested_rows: number;
+      status: string; attempt_count: number; retry_after_utc: string | null;
+      last_error_code: string | null; created_at_utc: string }>;
+    synthetic_fill_allowed: false; execution_enabled: false;
   };
   holdout_policy: Record<string, string>;
 }
@@ -387,6 +404,28 @@ export class DashboardApi {
     return this.http.post('/api/v1/research/protocol/audit', {});
   }
 
+  reserveResearchLineage(
+    market: string, targetMode: string, targetHorizonBars: number, hypothesis: string,
+  ): Observable<object> {
+    return this.http.post('/api/v1/research/lineage/reserve', {
+      market, hypothesis, target_mode: targetMode, target_horizon_bars: targetHorizonBars,
+      model_families: ['LOGISTIC_REGRESSION', 'RANDOM_FOREST', 'AUREX_HIST_GRADIENT_BOOSTING',
+        'LIGHTGBM', 'XGBOOST', 'CATBOOST', 'CALIBRATED_DISAGREEMENT_ENSEMBLE'],
+    });
+  }
+
+  runSelectiveTournament(market: string): Observable<object> {
+    return this.http.post('/api/v1/research/selective-tournament', {
+      market, notes: 'Owner-requested target-bound development tournament; holdout untouched',
+    });
+  }
+
+  freezeSelectiveCandidate(market: string): Observable<object> {
+    return this.http.post('/api/v1/research/holdout/freeze', {
+      market, notes: 'Freeze exact eligible V4 tournament leader; broker execution remains disabled',
+    });
+  }
+
   runResearchReplay(market: string, costModel: 'OPTIMISTIC' | 'NORMAL' | 'STRESSED' = 'NORMAL'): Observable<object> {
     return this.http.post('/api/v1/research/replay', {
       market, timeframe: 'M15', cost_model: costModel,
@@ -398,6 +437,13 @@ export class DashboardApi {
   evaluateHoldoutCandidate(candidateId: string): Observable<object> {
     return this.http.post('/api/v1/research/holdout/evaluate', {
       candidate_id: candidateId, acknowledgement: 'CONSUME HOLDOUT ONCE',
+    });
+  }
+
+  approveHoldoutCandidate(candidateId: string): Observable<object> {
+    return this.http.post('/api/v1/research/holdout/approve', {
+      candidate_id: candidateId,
+      acknowledgement: 'I APPROVE THIS EXACT HOLDOUT-PASSED ARTIFACT FOR FORWARD SHADOW ONLY',
     });
   }
 

@@ -80,9 +80,21 @@ HOLDOUT_REVIEW → OWNER_APPROVED → FORWARD_SHADOW → PROMOTED`. Retraining a
 forward-shadow candidate creates a new lineage and model version; it cannot alter
 the candidate being evaluated.
 
+The freeze adapter reconstructs only the exact target-bound tournament winner,
+fits and calibrates it on development data, freezes partition and artifact
+checksums, and records that holdout labels were not inspected. The one-use
+holdout adapter applies the same multiclass BUY/SELL/HOLD and disagreement rules
+to the reserved partition. A passed holdout still requires an explicit owner
+approval and enables only frozen forward shadow.
+
 Risk-on/risk-off and pre/post-event regimes remain deferred until Aurex has an
 audited, point-in-time macro dataset. They must not be reconstructed from
 information published after a prediction timestamp.
+
+Every newly retrieved scheduled event is stored as an immutable retrieval-time
+vintage with payload checksum and `available_from_utc`. Existing evidence can be
+backfilled only as a snapshot retrieved now; it is not treated as proof of what
+was known historically. Event regimes stay disabled until coverage is sufficient.
 
 ## Canonical governance introduced by migration 027
 

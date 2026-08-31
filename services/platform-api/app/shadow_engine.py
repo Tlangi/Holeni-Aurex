@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from app.config import Settings
@@ -16,6 +17,12 @@ from app.database import open_database
 from app.model_pipeline import FEATURES, _market_frame, add_features
 from app.order_lifecycle import record_created_intent, transition_intent
 from app.shadow_trades import mark_shadow_trades, open_shadow_trade
+from app.research_protocol import (
+    PROTOCOL_VERSION,
+    TARGET_CATALOG,
+    apply_ensemble_disagreement,
+    selective_directions_from_edges,
+)
 
 
 @dataclass(frozen=True)
@@ -144,6 +151,38 @@ def _artifact(path: str, digest: str) -> dict[str, object]:
 
 
 def _signal(frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: float) -> tuple[str, Decimal, Decimal]:
+    if str(bundle.get("research_protocol_version") or "") == PROTOCOL_VERSION:
+        payload = dict(bundle.get("target_specification") or {})
+        symbol = str(payload.get("symbol") or "")
+        digest = str(payload.get("sha256") or "")
+        specification = next((item for item in TARGET_CATALOG.get(symbol, ())
+                              if item.digest == digest), None)
+        if specification is None:
+            raise ValueError("MODEL_TARGET_CONTRACT_FAILED")
+        prepared = frame.copy()
+        observed = prepared.get("observed_spread_bps", pd.Series(np.nan, index=prepared.index))
+        fallback = float(bundle.get("fallback_spread") or 0)
+        prepared["effective_cost_bps"] = np.maximum(
+            observed.fillna(fallback).clip(lower=0).to_numpy(float), fallback,
+        )
+        featured = add_features(prepared, horizon=specification.horizon_bars, labelled=False)
+        if featured.empty:
+            raise ValueError("INSUFFICIENT_FEATURE_ROWS")
+        row = featured.iloc[[-1]]
+        model = bundle["model"]
+        probabilities = model.predict_proba(row[FEATURES])
+        edges = dict(bundle.get("edge_parameters") or {})
+        directions, _ = selective_directions_from_edges(
+            probabilities, model.classes_, row, specification,
+            buy_move_bps=float(edges["buy_move_bps"]),
+            sell_move_bps=float(edges["sell_move_bps"]),
+        )
+        directions = apply_ensemble_disagreement(model, row, directions)
+        direction = "BUY" if directions[0] == 1 else "SELL" if directions[0] == -1 else "HOLD"
+        class_value = 1 if direction == "BUY" else 2 if direction == "SELL" else 0
+        lookup = {int(value): index for index, value in enumerate(model.classes_)}
+        confidence = float(probabilities[0, lookup[class_value]]) if class_value in lookup else 0.0
+        return direction, Decimal(str(confidence)), Decimal(str(row.iloc[0]["atr"]))
     featured = add_features(frame, horizon=int(bundle.get("horizon") or 4), labelled=False)
     if featured.empty:
         raise ValueError("INSUFFICIENT_FEATURE_ROWS")

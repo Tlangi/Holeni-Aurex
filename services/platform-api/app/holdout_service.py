@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.metrics import roc_auc_score
 
 from app.config import Settings
 from app.database import open_database
@@ -42,7 +43,20 @@ from app.model_governance import (
     source_identity,
 )
 from app.research_protocol_store import insert_lifecycle_event
-from app.research_protocol import PROTOCOL_VERSION, TARGET_CATALOG
+from app.research_protocol import (
+    PROTOCOL_VERSION,
+    TARGET_CATALOG,
+    TargetSpecification,
+    _multiclass_calibration_error,
+    apply_ensemble_disagreement,
+    block_bootstrap_expectancy,
+    build_selective_target,
+    cost_stress_evidence,
+    fit_selective_development_model,
+    leakage_boundary_audit,
+    regime_slices,
+    selective_directions_from_edges,
+)
 
 
 FEATURE_VERSION_FALLBACK = "FEATURES_V1"
@@ -153,6 +167,254 @@ def _effective_costs(frame: pd.DataFrame, fallback_spread: float, configured_bps
 def _utc_timestamp(value: object) -> pd.Timestamp:
     timestamp = pd.Timestamp(value)
     return timestamp.tz_localize("UTC") if timestamp.tzinfo is None else timestamp.tz_convert("UTC")
+
+
+def _target_specification(symbol: str, digest: str) -> TargetSpecification:
+    specification = next((item for item in TARGET_CATALOG[symbol] if item.digest == digest), None)
+    if specification is None:
+        raise ValueError("Target checksum does not match the immutable catalog")
+    return specification
+
+
+def _selective_multiclass_auc(
+    targets: np.ndarray, probabilities: np.ndarray, model_classes: np.ndarray,
+) -> float:
+    present = np.unique(targets)
+    if len(present) < 2:
+        return 0.5
+    if not set(int(value) for value in present).issubset(
+        set(int(value) for value in model_classes)
+    ):
+        return 0.5
+    columns = [int(np.where(model_classes == value)[0][0]) for value in present]
+    selected = probabilities[:, columns]
+    if len(present) == 2:
+        binary = (targets == present[1]).astype(int)
+        return float(roc_auc_score(binary, selected[:, 1]))
+    selected = selected / np.maximum(selected.sum(axis=1, keepdims=True), 1e-12)
+    return float(roc_auc_score(targets, selected, labels=present,
+                               multi_class="ovr", average="weighted"))
+
+
+def _selective_labelable_count(causal: pd.DataFrame, horizon_bars: int) -> int:
+    if causal.empty:
+        return 0
+    elapsed_minutes = causal.index.to_series().diff().dt.total_seconds().div(60)
+    boundaries = elapsed_minutes.ne(15.0)
+    if "provider" in causal.columns:
+        provider = causal["provider"].astype(str)
+        boundaries = boundaries | provider.ne(provider.shift(1))
+    return int(sum(max(0, len(group) - horizon_bars)
+                   for _, group in causal.groupby(boundaries.cumsum())))
+
+
+def _freeze_selective_candidate(
+    settings: Settings, tenant_id: str, request: FreezeCandidateRequest,
+) -> dict[str, object]:
+    """Freeze only the exact passing leader of a target-bound V4 tournament."""
+    symbol = request.market.upper()
+    from app.model_tournament import selective_challengers
+
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT TOP (1) l.*,m.symbol,sv.strategy_version_id,sv.version strategy_version,
+                      sv.features_version,s.target_sha256,s.configuration_json
+               FROM app.research_lineages l JOIN app.markets m ON m.market_id=l.market_id
+               JOIN app.research_target_specs s ON s.research_target_spec_id=l.research_target_spec_id
+               CROSS JOIN app.strategy_versions sv JOIN app.strategies st ON st.strategy_id=sv.strategy_id
+               WHERE l.tenant_id=%s AND m.symbol=%s AND l.status='RESERVED'
+                 AND l.research_protocol_version=%s AND st.strategy_name='Conservative FX Demo'
+                 AND sv.version='1.0' ORDER BY l.created_at_utc DESC""",
+            (tenant_id, symbol, PROTOCOL_VERSION),
+        )
+        lineage = cursor.fetchone()
+        if not lineage:
+            raise ValueError("A reserved Selective V4 lineage is required")
+        cursor.execute(
+            """SELECT TOP (1) experiment_id,outcome_json,configuration_hash,completed_at_utc
+               FROM app.research_experiments WHERE tenant_id=%s AND market_id=%s
+                 AND research_lineage_id=%s AND research_target_spec_id=%s
+                 AND research_protocol_version=%s AND retrain_type='MODEL_TOURNAMENT'
+                 AND status='COMPLETED' ORDER BY completed_at_utc DESC""",
+            (tenant_id, str(lineage["market_id"]), str(lineage["research_lineage_id"]),
+             str(lineage["research_target_spec_id"]), PROTOCOL_VERSION),
+        )
+        tournament = cursor.fetchone()
+        if not tournament:
+            raise ValueError("A completed target-bound selective tournament is required")
+        cursor.execute(
+            """SELECT TOP (1) c.version,b.p75_spread
+               FROM app.cost_model_versions c JOIN app.cost_model_buckets b
+                 ON b.cost_model_version_id=c.cost_model_version_id
+               WHERE c.market_id=%s AND c.status='CURRENT' AND b.bucket_type='OVERALL'
+               ORDER BY c.created_at_utc DESC""", (str(lineage["market_id"]),),
+        )
+        cost = cursor.fetchone()
+        frame = _market_frame(cursor, str(lineage["market_id"]))
+    if not cost:
+        raise ValueError("A current empirical cost model is required")
+
+    outcome = json.loads(str(tournament["outcome_json"]))
+    if not bool(outcome.get("leader_passed_all_development_gates")):
+        raise ValueError("The selective tournament leader failed one or more development gates")
+    leader_key = str(outcome.get("research_leader") or "")
+    target_digest = str(outcome.get("leader_target_sha256") or "")
+    if target_digest != str(lineage["target_sha256"]):
+        raise ValueError("Tournament leader target does not match the reserved lineage")
+    leader = next((item for item in outcome.get("candidates", [])
+                   if item.get("candidate") == leader_key
+                   and item.get("target_specification", {}).get("sha256") == target_digest), None)
+    if not leader or not bool(leader.get("eligible_to_freeze")) or not all(leader.get("gates", {}).values()):
+        raise ValueError("Recorded tournament leader is not eligible to freeze")
+    challenger = next((item for item in selective_challengers(settings.max_research_cpu_threads)
+                       if item.key == leader_key), None)
+    if challenger is None:
+        raise ValueError("Recorded challenger is unavailable in this source version")
+    specification = _target_specification(symbol, target_digest)
+    development_raw = frame.loc[
+        (frame.index >= _utc_timestamp(lineage["development_start_utc"])) &
+        (frame.index <= _utc_timestamp(lineage["development_end_utc"]))
+    ].copy()
+    holdout_raw = frame.loc[
+        (frame.index >= _utc_timestamp(lineage["holdout_start_utc"])) &
+        (frame.index <= _utc_timestamp(lineage["holdout_end_utc"]))
+    ].copy()
+    if development_raw.empty or holdout_raw.empty or development_raw.index.max() >= holdout_raw.index.min():
+        raise ValueError("Reserved chronological partitions are invalid")
+    fallback_spread = float(cost["p75_spread"])
+    development = build_selective_target(
+        _effective_costs(development_raw, fallback_spread, settings.model_round_trip_cost_bps),
+        specification, configured_cost_bps=settings.model_round_trip_cost_bps,
+    )
+    holdout_causal = add_features(
+        _effective_costs(holdout_raw, fallback_spread, settings.model_round_trip_cost_bps),
+        labelled=False,
+    )
+    expected_holdout_rows = _selective_labelable_count(
+        holdout_causal, specification.horizon_bars,
+    )
+    if len(development) < settings.model_minimum_rows:
+        raise ValueError("Feature-complete development evidence is below the configured floor")
+    if expected_holdout_rows < settings.holdout_minimum_rows:
+        raise ValueError("Untouched feature-complete holdout evidence is below the configured floor")
+    audit = leakage_boundary_audit(
+        development_raw, development, specification=specification,
+        windows=leader.get("windows", []), holdout_start=holdout_raw.index.min().to_pydatetime(),
+    )
+    if not audit["passed"]:
+        raise ValueError("Current development data failed the frozen leakage-boundary audit")
+    model, calibration = fit_selective_development_model(
+        challenger.factory, development, horizon_bars=specification.horizon_bars,
+    )
+    fallback_move = max(specification.minimum_edge_bps, float(development["atr_pct"].median()) * 10000)
+    edge_parameters = {
+        "buy_move_bps": float(calibration["buy_move_bps"] or fallback_move),
+        "sell_move_bps": float(calibration["sell_move_bps"] or fallback_move),
+    }
+    development_digest, holdout_digest = _frame_digest(development_raw), _frame_digest(holdout_raw)
+    configuration = {
+        "research_protocol_version": PROTOCOL_VERSION,
+        "tournament_experiment_id": str(tournament["experiment_id"]),
+        "tournament_configuration_hash": str(tournament["configuration_hash"]),
+        "research_lineage_id": str(lineage["research_lineage_id"]),
+        "research_target_spec_id": str(lineage["research_target_spec_id"]),
+        "target": specification.configuration(), "target_sha256": specification.digest,
+        "challenger_key": leader_key, "challenger_configuration": challenger.configuration,
+        "edge_parameters": edge_parameters, "calibration": calibration,
+        "development_data_sha256": development_digest, "holdout_data_sha256": holdout_digest,
+        "holdout_labels_inspected_at_freeze": False,
+    }
+    configuration_hash = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode()).hexdigest()
+    candidate_id, experiment_id = str(uuid4()), str(uuid4())
+    candidate_version = f"v4-{symbol.lower()}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{candidate_id[:6]}"
+    artifact_root = MODEL_ROOT / "holdout"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_root / f"{candidate_version}.joblib"
+    joblib.dump({
+        "model": model, "features": FEATURES, "horizon": specification.horizon_bars,
+        "research_protocol_version": PROTOCOL_VERSION,
+        "target_specification": specification.configuration() | {"sha256": specification.digest},
+        "challenger_key": leader_key, "edge_parameters": edge_parameters,
+        "fallback_spread": fallback_spread, "configuration": configuration,
+        "development_data_sha256": development_digest, "holdout_data_sha256": holdout_digest,
+    }, artifact_path)
+    artifact_digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    try:
+        with open_database(settings) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """INSERT app.research_experiments
+                     (experiment_id,tenant_id,market_id,strategy_version,feature_version,label_version,
+                      model_version,regime_version,cost_model_version,retrain_type,training_start_utc,
+                      training_end_utc,holdout_start_utc,holdout_end_utc,configuration_hash,status,
+                      notes,outcome_json,research_lineage_id,validation_policy_version,label_horizon_bars,
+                      label_horizon_minutes,label_definition_hash,research_target_spec_id,research_protocol_version)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'HOLDOUT_CANDIDATE',%s,%s,%s,%s,%s,'REGISTERED',
+                          %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (experiment_id, tenant_id, str(lineage["market_id"]), str(lineage["strategy_version"]),
+                 str(lineage["features_version"] or FEATURE_VERSION_FALLBACK), specification.version,
+                 candidate_version, REGIME_VERSION, str(cost["version"]),
+                 development.index.min().to_pydatetime(), development.index.max().to_pydatetime(),
+                 holdout_raw.index.min().to_pydatetime(), holdout_raw.index.max().to_pydatetime(),
+                 configuration_hash, request.notes,
+                 json.dumps({"validation": leader, "validation_passed": True,
+                             "holdout_consumed": False}, default=_serial),
+                 str(lineage["research_lineage_id"]), VALIDATION_POLICY_VERSION,
+                 specification.horizon_bars, specification.horizon_bars * 15, specification.digest,
+                 str(lineage["research_target_spec_id"]), PROTOCOL_VERSION),
+            )
+            cursor.execute(
+                """INSERT app.holdout_candidates
+                     (holdout_candidate_id,experiment_id,tenant_id,market_id,strategy_version_id,
+                      candidate_version,feature_version,label_version,regime_version,cost_model_version,
+                      artifact_path,artifact_sha256,configuration_hash,development_data_sha256,
+                      holdout_data_sha256,development_start_utc,development_end_utc,holdout_start_utc,
+                      holdout_end_utc,development_rows,holdout_rows,validation_json,validation_passed,
+                      status,notes,research_lineage_id,validation_policy_version,label_horizon_bars,
+                      label_definition_hash,research_target_spec_id,research_protocol_version,
+                      tournament_experiment_id,challenger_key)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,
+                          'FROZEN',%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (candidate_id, experiment_id, tenant_id, str(lineage["market_id"]),
+                 str(lineage["strategy_version_id"]), candidate_version,
+                 str(lineage["features_version"] or FEATURE_VERSION_FALLBACK), specification.version,
+                 REGIME_VERSION, str(cost["version"]), str(artifact_path.resolve()), artifact_digest,
+                 configuration_hash, development_digest, holdout_digest,
+                 development_raw.index.min().to_pydatetime(), development_raw.index.max().to_pydatetime(),
+                 holdout_raw.index.min().to_pydatetime(), holdout_raw.index.max().to_pydatetime(),
+                 len(development), expected_holdout_rows, json.dumps(leader, default=_serial), request.notes,
+                 str(lineage["research_lineage_id"]), VALIDATION_POLICY_VERSION,
+                 specification.horizon_bars, specification.digest,
+                 str(lineage["research_target_spec_id"]), PROTOCOL_VERSION,
+                 str(tournament["experiment_id"]), leader_key),
+            )
+            cursor.execute(
+                "UPDATE app.research_lineages SET status='CANDIDATE_FROZEN' WHERE research_lineage_id=%s AND status='RESERVED'",
+                (str(lineage["research_lineage_id"]),),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Research lineage changed while freezing the candidate")
+            evidence = {"artifact_sha256": artifact_digest, "tournament_experiment_id": str(tournament["experiment_id"]),
+                        "target_sha256": specification.digest, "challenger_key": leader_key,
+                        "development_gates": leader["gates"], "holdout_consumed": False,
+                        "execution_enabled": False}
+            insert_lifecycle_event(cursor, tenant_id=tenant_id, market_id=str(lineage["market_id"]),
+                research_lineage_id=str(lineage["research_lineage_id"]), holdout_candidate_id=candidate_id,
+                from_state="RESEARCH", to_state="ELIGIBLE_TO_FREEZE",
+                reason="Exact target-bound tournament leader passed all development gates", evidence=evidence)
+            insert_lifecycle_event(cursor, tenant_id=tenant_id, market_id=str(lineage["market_id"]),
+                research_lineage_id=str(lineage["research_lineage_id"]), holdout_candidate_id=candidate_id,
+                from_state="ELIGIBLE_TO_FREEZE", to_state="FROZEN",
+                reason="Calibrated multiclass artifact and partition checksums frozen", evidence=evidence)
+            connection.commit()
+    except Exception:
+        artifact_path.unlink(missing_ok=True)
+        raise
+    return {"status": "FROZEN", "candidate_id": candidate_id, "candidate_version": candidate_version,
+            "market": symbol, "challenger": leader_key, "target_sha256": specification.digest,
+            "development_rows": len(development), "holdout_rows": expected_holdout_rows,
+            "holdout_consumed": False, "promotable": False, "execution_enabled": False}
 
 
 def _validation_evidence(settings: Settings, evaluation: object) -> tuple[dict[str, object], dict[str, bool]]:
@@ -336,10 +598,7 @@ def freeze_candidate(
     if not lineage:
         raise ValueError("Reserve an immutable research lineage and holdout before freezing a candidate")
     if len(lineage) > 6 and str(lineage[6] or "") == PROTOCOL_VERSION:
-        raise ValueError(
-            "Selective V4 candidates must be frozen from the exact recorded tournament winner; "
-            "the legacy binary freeze route cannot be used"
-        )
+        return _freeze_selective_candidate(settings, tenant_id, request)
     cost_version, fallback_spread = str(cost[0]), float(cost[1])
     lineage_id = str(lineage[0])
     development_raw = frame.loc[
@@ -640,6 +899,132 @@ def evaluate_holdout(
             frame.loc[frame.index <= holdout_raw.index.max()], float(bundle["fallback_spread"]),
             settings.model_round_trip_cost_bps,
         )
+        if str(bundle.get("research_protocol_version") or "") == PROTOCOL_VERSION:
+            specification_payload = dict(bundle.get("target_specification") or {})
+            specification = _target_specification(
+                str(candidate["symbol"]), str(specification_payload.get("sha256") or ""),
+            )
+            if (str(candidate.get("research_protocol_version") or "") != PROTOCOL_VERSION or
+                    str(candidate.get("label_definition_hash") or "") != specification.digest):
+                raise ValueError("Frozen selective candidate metadata does not match its artifact")
+            development = build_selective_target(
+                _effective_costs(development_raw, float(bundle["fallback_spread"]),
+                                 settings.model_round_trip_cost_bps),
+                specification, configured_cost_bps=settings.model_round_trip_cost_bps,
+            )
+            holdout = build_selective_target(
+                _effective_costs(holdout_raw, float(bundle["fallback_spread"]),
+                                 settings.model_round_trip_cost_bps),
+                specification, configured_cost_bps=settings.model_round_trip_cost_bps,
+            )
+            if len(holdout) != int(candidate["holdout_rows"]):
+                raise ValueError("Reserved selective holdout observation count changed")
+            model = bundle["model"]
+            probabilities = model.predict_proba(holdout[FEATURES])
+            edges = dict(bundle.get("edge_parameters") or {})
+            directions, explanations = selective_directions_from_edges(
+                probabilities, model.classes_, holdout, specification,
+                buy_move_bps=float(edges["buy_move_bps"]),
+                sell_move_bps=float(edges["sell_move_bps"]),
+            )
+            directions = apply_ensemble_disagreement(model, holdout, directions)
+            targets = holdout["target"].to_numpy(int)
+            metrics = trading_metrics(
+                holdout["future_return"].to_numpy(float), directions,
+                round_trip_cost_bps=holdout["effective_cost_bps"].to_numpy(float),
+            )
+            baselines = _baseline_results(
+                [holdout], round_trip_cost_bps=settings.model_round_trip_cost_bps,
+            )
+            regimes = regime_slices(holdout, directions, str(candidate["symbol"]))
+            auc = _selective_multiclass_auc(targets, probabilities, model.classes_)
+            one_hot = np.column_stack([(targets == int(value)).astype(float)
+                                       for value in model.classes_])
+            brier = float(np.mean(np.sum((probabilities - one_hot) ** 2, axis=1)))
+            calibration = _multiclass_calibration_error(targets, probabilities, model.classes_)
+            drift = _feature_drift(development, holdout)
+            regime_coverage = float(np.mean([
+                int(item["observation_count"]) >= 100 for item in regimes
+            ])) if regimes else 0.0
+            best_baseline = max(float(item["expectancy"] or 0) for item in baselines)
+            gates = evidence_gates(
+                settings, auc=auc, metrics=metrics, calibration_error=calibration,
+                feature_drift_score=drift, regime_coverage=regime_coverage,
+                baseline_expectancy=best_baseline,
+            )
+            gates["buy_sell_hold_class_coverage"] = (
+                set(int(value) for value in np.unique(targets)) == {0, 1, 2}
+                and set(int(value) for value in model.classes_) == {0, 1, 2}
+            )
+            bootstrap = block_bootstrap_expectancy(
+                holdout["future_return"].to_numpy(float), directions,
+                holdout["effective_cost_bps"].to_numpy(float),
+            )
+            stresses = cost_stress_evidence(holdout, directions)
+            p90 = next(item for item in stresses if item["scenario"] == "SPREAD_P90")
+            gates["bootstrap_lower_bound_positive"] = float(bootstrap["lower_95"]) > 0
+            gates["p90_spread_stress_positive"] = float(p90["expectancy"] or 0) > 0
+            passed = all(gates.values())
+            evaluation_id = str(uuid4())
+            reason_counts: dict[str, int] = {}
+            for explanation in explanations:
+                reason = str(explanation["reason"])
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            outcome = {
+                "research_protocol_version": PROTOCOL_VERSION,
+                "target_sha256": specification.digest,
+                "challenger_key": bundle.get("challenger_key"),
+                "auc": auc, "brier_score": brier, "calibration_error": calibration,
+                "feature_drift_score": drift, "regime_coverage": regime_coverage,
+                "hold_fraction": float(np.mean(directions == 0)),
+                "decision_reason_counts": reason_counts,
+                "metrics": metrics, "baselines": baselines, "regimes": regimes,
+                "bootstrap_expectancy": bootstrap, "cost_stress": stresses,
+                "gates": gates, "passed": passed,
+            }
+            with open_database(settings) as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """INSERT app.holdout_evaluations
+                         (holdout_evaluation_id,holdout_candidate_id,result,observation_count,trade_count,
+                          validation_auc,brier_score,calibration_error,feature_drift_score,regime_coverage,
+                          win_rate,profit_factor,expectancy,max_drawdown,baseline_outperformed,
+                          metrics_json,baselines_json,regimes_json,gates_json)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (evaluation_id, request.candidate_id, "PASSED" if passed else "REJECTED",
+                     len(holdout), metrics["trade_count"], auc, brier, calibration, drift,
+                     regime_coverage, metrics["win_rate"], metrics["profit_factor"],
+                     metrics["expectancy"], metrics["max_drawdown"],
+                     int(gates["baseline_outperformance"]), json.dumps(metrics, default=_serial),
+                     json.dumps(baselines, default=_serial), json.dumps(regimes, default=_serial),
+                     json.dumps(gates)),
+                )
+                cursor.execute(
+                    "UPDATE app.holdout_candidates SET status=%s,evaluated_at_utc=SYSUTCDATETIME() WHERE holdout_candidate_id=%s AND status='EVALUATING'",
+                    ("OWNER_REVIEW_REQUIRED" if passed else "HOLDOUT_REJECTED", request.candidate_id),
+                )
+                cursor.execute(
+                    "UPDATE app.research_lineages SET status=%s WHERE research_lineage_id=%s AND status='CANDIDATE_FROZEN'",
+                    ("OWNER_REVIEW_REQUIRED" if passed else "REJECTED", str(candidate["research_lineage_id"])),
+                )
+                cursor.execute(
+                    "UPDATE app.research_experiments SET status=%s,outcome_json=%s,completed_at_utc=SYSUTCDATETIME() WHERE experiment_id=%s",
+                    ("COMPLETED" if passed else "REJECTED", json.dumps(outcome, default=_serial),
+                     str(candidate["experiment_id"])),
+                )
+                if not passed:
+                    insert_lifecycle_event(cursor, tenant_id=tenant_id,
+                        market_id=str(candidate["market_id"]),
+                        research_lineage_id=str(candidate["research_lineage_id"]),
+                        holdout_candidate_id=request.candidate_id,
+                        from_state="HOLDOUT_REVIEW", to_state="REJECTED",
+                        reason="Selective untouched holdout rejected the frozen candidate",
+                        evidence={"evaluation": outcome, "execution_enabled": False})
+                connection.commit()
+            return {"status": "OWNER_REVIEW_REQUIRED" if passed else "HOLDOUT_REJECTED",
+                    "candidate_id": request.candidate_id, "market": candidate["symbol"],
+                    "holdout_consumed": True, "evaluation": outcome, "promotable": False,
+                    "forward_shadow_enabled": False, "execution_enabled": False}
         featured = add_features(prepared, labelled=True)
         development = featured.loc[
             (featured.index >= development_raw.index.min()) &
@@ -777,11 +1162,13 @@ def approve_holdout_candidate(
                      (model_version_id,strategy_version_id,market_id,model_name,version,artifact_path,
                       artifact_sha256,validation_auc,training_rows,status,holdout_candidate_id,
                       research_lineage_id,validation_policy_version,feature_version,label_version,
-                      cost_model_version,source_identity,dirty_worktree)
+                      cost_model_version,source_identity,dirty_worktree,research_target_spec_id,
+                      research_protocol_version,challenger_key)
                    SELECT %s,c.strategy_version_id,c.market_id,%s,%s,c.artifact_path,c.artifact_sha256,
                           e.validation_auc,c.development_rows,'VALIDATED',c.holdout_candidate_id,
                           c.research_lineage_id,c.validation_policy_version,c.feature_version,
-                          c.label_version,c.cost_model_version,%s,%s
+                          c.label_version,c.cost_model_version,%s,%s,c.research_target_spec_id,
+                          c.research_protocol_version,c.challenger_key
                    FROM app.holdout_candidates c JOIN app.holdout_evaluations e
                      ON e.holdout_candidate_id=c.holdout_candidate_id
                    WHERE c.holdout_candidate_id=%s AND c.status='OWNER_REVIEW_REQUIRED'""",

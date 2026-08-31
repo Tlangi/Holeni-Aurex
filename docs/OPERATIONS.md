@@ -250,3 +250,31 @@ already count missing periods only inside configured regular sessions and record
 `recent_missing_period_count` separately. Historical warnings may therefore
 remain for bounded provider downloads or genuine gaps even when weekend alerts
 are correctly suppressed. Feature construction continues to reset at every gap.
+
+## Security, backup and retention hardening
+
+Before public-domain exposure, configure a strong `AUTH_HASH_PEPPER`, HTTPS,
+`SESSION_COOKIE_SECURE=true` and an MFA enrollment/verification flow. Login
+attempts are rate-limited by hashed email and remote address and repeated owner
+failures lock the account temporarily. Setting `mfa_required=1` currently fails
+closed; it does not pretend that MFA verification already exists.
+
+After all migrations, create and verify a separate deployment principal, then
+run `database/operations/harden_runtime_user.sql` as an administrator. This moves
+schema ownership to `dbo`, removes broad data/DDL roles from the runtime account
+and grants only DML on `app`. Never remove migration privileges until the
+deployment principal has been tested.
+
+Encrypted off-server backups require three separately verified steps:
+
+1. Run `database/operations/configure_backup_encryption.sql` with offline secrets
+   and export the certificate plus private key to restricted off-server storage.
+2. Run `operations/backup_database_encrypted.ps1 -OffServerDirectory <path>`.
+   The script refuses a workspace destination, verifies the SQL backup, compares
+   local/remote SHA-256 hashes and records a verified replication row.
+3. Schedule only after a restore has succeeded on a separate test instance.
+
+`scripts/retention_status.py` is deliberately dry-run. Policies in
+`app.data_retention_policies` define hot/archive periods, but archive-required
+records must never be deleted until an encrypted archive checksum and restore
+test exist. Destructive retention execution remains an explicit later operation.

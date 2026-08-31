@@ -10,6 +10,7 @@ from app.config import Settings
 from app.database import open_database
 from app.forward_evidence import capture_forward_evidence, run_market_quality_audits
 from app.model_pipeline import train_all_markets
+from app.model_monitoring import capture_model_monitoring
 from app.macro_intelligence import generate_market_decisions, sync_official_macro_sources
 from app.research_evidence import sync_cost_models, sync_quality_evidence
 from app.market_recovery import process_one_bounded_recovery, schedule_bounded_recovery_jobs
@@ -135,13 +136,16 @@ class ShadowTradingWorker:
             outcomes = run_market_quality_audits(self.settings)
             segment_outcomes = sync_quality_evidence(self.settings)
             cost_outcomes = sync_cost_models(self.settings)
+            monitoring = []
+            for tenant_id in self._all_tenant_ids():
+                monitoring.extend(capture_model_monitoring(self.settings, tenant_id))
             recovery_jobs = schedule_bounded_recovery_jobs(self.settings)
             recovery = process_one_bounded_recovery(self.settings)
             failed = sum(1 for item in outcomes if item.get("status") == "FAIL")
             logger.info(
                 "market quality audits completed",
                 extra={"worker": "shadow_trading", "operation": "market_quality.audit",
-                       "result": f"CHECKS_{len(outcomes)}_SEGMENTS_{len(segment_outcomes)}_COSTS_{len(cost_outcomes)}_RECOVERY_{len(recovery_jobs)}_{'RUN' if recovery else 'IDLE'}_FAILED_{failed}"},
+                       "result": f"CHECKS_{len(outcomes)}_SEGMENTS_{len(segment_outcomes)}_COSTS_{len(cost_outcomes)}_DRIFT_{len(monitoring)}_RECOVERY_{len(recovery_jobs)}_{'RUN' if recovery else 'IDLE'}_FAILED_{failed}"},
             )
         except Exception as exc:
             logger.warning(

@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     session_cookie_name: str = "aurex_session"
     session_hours: int = 12
     session_cookie_secure: bool = False
+    auth_hash_pepper: str = Field(default="", repr=False)
+    auth_failure_window_minutes: int = Field(default=15, ge=5, le=60)
+    auth_max_email_failures: int = Field(default=5, ge=3, le=20)
+    auth_max_address_failures: int = Field(default=20, ge=5, le=100)
+    auth_lockout_minutes: int = Field(default=30, ge=5, le=1440)
     background_sync_enabled: bool = True
     account_sync_seconds: int = 60
     stale_after_seconds: int = 180

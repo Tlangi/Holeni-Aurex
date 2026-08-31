@@ -47,7 +47,9 @@ from app.operations_status import read_operational_assurance
 from app.scheduler import AccountSyncScheduler
 from app.trading_status import read_trading_status
 from app.markets import read_candles, read_market_inventory
+from app.market_data_operations import read_market_data_operations
 from app.market_intelligence import model_readiness
+from app.model_monitoring import read_model_monitoring
 from app.macro_intelligence import generate_market_decisions, read_macro_status, sync_official_macro_sources
 from app.trades import read_trade_history
 from app.readiness import read_trading_readiness
@@ -218,6 +220,12 @@ def models_readiness(user: AuthenticatedUser = Depends(require_user)) -> JSONRes
 @app.get("/api/v1/models/validation", tags=["models"])
 def models_validation(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     return JSONResponse(content=read_model_validation(settings, user.tenant_id))
+
+
+@app.get("/api/v1/models/monitoring", tags=["models"])
+def models_monitoring(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Read feature, calibration and cost drift evidence; never change model status."""
+    return JSONResponse(content=jsonable_encoder(read_model_monitoring(settings, user.tenant_id)))
 
 
 @app.post("/api/v1/replay/runs", tags=["replay"])
@@ -485,6 +493,12 @@ def market_inventory(user: AuthenticatedUser = Depends(require_user)) -> JSONRes
         return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
     except DatabaseUnavailable:
         return JSONResponse(content={"status": "unavailable"}, status_code=503)
+
+
+@app.get("/api/v1/market-data/operations", tags=["markets"])
+def market_data_operations(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Read quarantined provider rows and bounded recovery jobs."""
+    return JSONResponse(content=jsonable_encoder(read_market_data_operations(settings)))
 
 
 @app.get("/api/v1/markets/candles", tags=["markets"])

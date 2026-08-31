@@ -103,6 +103,23 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                         f"latest_completed_m5={latest}; session_state={session.status}; "
                         f"session_reason={session.reason}",
                     ))
+            cursor.execute(
+                """WITH latest AS (
+                     SELECT s.*,m.symbol,ROW_NUMBER() OVER(PARTITION BY s.tenant_id,s.market_id
+                       ORDER BY s.evaluated_at_utc DESC) rn
+                     FROM app.model_monitoring_snapshots s JOIN app.markets m ON m.market_id=s.market_id)
+                   SELECT symbol,status,feature_drift_score,calibration_drift_score,cost_drift_score,
+                          evaluated_at_utc FROM latest WHERE rn=1 AND status IN ('WARN','FAIL')"""
+            )
+            for drift in cursor.fetchall():
+                symbol = str(drift["symbol"])
+                issues.append(HealthIssue(
+                    f"model.{symbol}.drift", "CRITICAL" if drift["status"] == "FAIL" else "WARNING",
+                    f"Model evidence drift requires attention: {symbol}",
+                    f"status={drift['status']}; feature={drift['feature_drift_score']}; "
+                    f"calibration={drift['calibration_drift_score']}; cost={drift['cost_drift_score']}; "
+                    f"evaluated={drift['evaluated_at_utc']}",
+                ))
     except Exception as exc:
         issues.append(HealthIssue("database.health_query", "CRITICAL", "Health database query failed",
                                   type(exc).__name__))

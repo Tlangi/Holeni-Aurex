@@ -52,12 +52,49 @@
         <div><span>Lifecycle events</span><strong>{{ research.selective_protocol.lifecycle_events.length }}</strong></div>
         <div><span>Execution capability</span><strong>NONE</strong></div>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Target</th><th>Horizon</th><th>Feature rows</th><th>Leakage audit</th><th>Evaluated</th></tr></thead>
+      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Target</th><th>Horizon</th><th>Feature rows</th><th>Leakage audit</th><th>Evaluated</th><th></th></tr></thead>
         <tbody>@for (spec of research.selective_protocol.target_specifications; track spec.target_sha256) {
           <tr><td>{{ spec.symbol }}</td><td>{{ spec.target_mode }}</td><td>{{ spec.horizon_bars }} bars</td>
             <td>{{ (spec.feature_rows ?? 0) | number }}</td><td><span class="audit-status" [class.pass]="spec.passed">{{ spec.passed === true ? 'PASS' : spec.passed === false ? 'FAIL' : 'PENDING' }}</span></td>
-            <td>{{ spec.evaluated_at_utc ? (spec.evaluated_at_utc | date:'short':'Africa/Johannesburg') : '—' }}</td></tr>
-        } @empty { <tr><td colspan="6">Target specifications have not been registered.</td></tr> }</tbody>
+            <td>{{ spec.evaluated_at_utc ? (spec.evaluated_at_utc | date:'short':'Africa/Johannesburg') : '—' }}</td>
+            <td><button class="table-action" type="button" (click)="chooseTarget(spec)">Select</button></td></tr>
+        } @empty { <tr><td colspan="7">Target specifications have not been registered.</td></tr> }</tbody>
+      </table></div>
+      <div class="lineage-workflow">
+        <div><small>SELECTED TARGET</small><strong>{{ selectedTarget()?.symbol ?? 'None' }} · {{ selectedTarget()?.target_mode ?? 'Select above' }} · {{ selectedTarget()?.horizon_bars ?? '—' }} bars</strong></div>
+        <label>Predeclared hypothesis<textarea rows="2" [ngModel]="hypothesis()" (ngModelChange)="hypothesis.set($event)" maxlength="1000"></textarea></label>
+        <button type="button" [disabled]="busy() !== '' || !selectedTarget()" (click)="reserveLineage()">{{ busy() === 'lineage' ? 'Reserving…' : 'Reserve immutable lineage' }}</button>
+      </div>
+      <div class="lineage-list">
+        @for (lineage of research.selective_protocol.lineages; track lineage.research_lineage_id) {
+          <article><div><strong>{{ lineage.symbol }} · {{ lineage.target_mode }} / {{ lineage.horizon_bars }}</strong><span>{{ lineage.status }} · holdout from {{ lineage.holdout_start_utc | date:'mediumDate':'UTC' }}</span></div>
+            <button type="button" [disabled]="busy() !== '' || lineage.status !== 'RESERVED'" (click)="queueTournament(lineage.symbol)">Queue tournament</button>
+            <button type="button" [disabled]="busy() !== '' || lineage.status !== 'RESERVED'" (click)="freezeLeader(lineage.symbol)">Freeze eligible leader</button></article>
+        }
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><p>MARKET-DATA OPERATIONS</p><h2>Quarantine & bounded recovery</h2></div>
+        <span>Synthetic price filling: prohibited</span></div>
+      <div class="protocol-summary">
+        <div><span>Quarantined</span><strong>{{ research.data_operations.quarantine_summary['QUARANTINED'] ?? 0 }}</strong></div>
+        <div><span>Recovery queued</span><strong>{{ research.data_operations.recovery_summary['QUEUED'] ?? 0 }}</strong></div>
+        <div><span>Recovery failed</span><strong>{{ research.data_operations.recovery_summary['FAILED'] ?? 0 }}</strong></div>
+        <div><span>Quota deferred</span><strong>{{ research.data_operations.recovery_summary['QUOTA_DEFERRED'] ?? 0 }}</strong></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Provider</th><th>Reason</th><th>Source row</th><th>Status</th><th>Observed</th></tr></thead>
+        <tbody>@for (row of research.data_operations.quarantine; track row.market_data_quarantine_id) {
+          <tr><td>{{ row.symbol }}</td><td>{{ row.provider }}</td><td>{{ row.rejection_code }}</td>
+            <td>{{ row.source_row_number ?? '—' }}</td><td>{{ row.status }}</td>
+            <td>{{ row.observed_at_utc | date:'short':'Africa/Johannesburg' }}</td></tr>
+        } @empty { <tr><td colspan="6">No provider rows are quarantined.</td></tr> }</tbody>
+      </table></div>
+      <div class="table-wrap recovery-table"><table><thead><tr><th>Market</th><th>Gap</th><th>Maximum rows</th><th>Attempts</th><th>Status</th><th>Error</th></tr></thead>
+        <tbody>@for (job of research.data_operations.recovery_jobs; track job.market_data_recovery_job_id) {
+          <tr><td>{{ job.symbol }} · {{ job.timeframe }}</td><td>{{ job.gap_start_utc | date:'short':'UTC' }} – {{ job.gap_end_utc | date:'short':'UTC' }}</td>
+            <td>{{ job.maximum_requested_rows }}</td><td>{{ job.attempt_count }}</td><td>{{ job.status }}</td><td>{{ job.last_error_code ?? '—' }}</td></tr>
+        } @empty { <tr><td colspan="6">No bounded recovery jobs have been required.</td></tr> }</tbody>
       </table></div>
     </section>
 
@@ -86,6 +123,11 @@
             @if (candidate.status === 'FROZEN') {
               <button type="button" [disabled]="busy() !== ''" (click)="consumeHoldout(candidate.holdout_candidate_id)">
                 {{ busy() === candidate.holdout_candidate_id ? 'Consuming once…' : 'Evaluate holdout once' }}
+              </button>
+            }
+            @if (candidate.status === 'OWNER_REVIEW_REQUIRED') {
+              <button type="button" [disabled]="busy() !== ''" (click)="approveHoldout(candidate.holdout_candidate_id)">
+                {{ busy() === 'approve-' + candidate.holdout_candidate_id ? 'Approving…' : 'Approve for forward shadow only' }}
               </button>
             }
           </article>

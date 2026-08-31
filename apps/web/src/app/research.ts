@@ -2,12 +2,13 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { DatePipe, DecimalPipe, KeyValuePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { finalize } from 'rxjs';
+import { FormsModule } from '@angular/forms';
 import { DashboardApi, ResearchExperiment, ResearchStatusData } from './dashboard-api';
 import { AuthApi } from './auth-api';
 
 @Component({
   selector: 'aurex-research',
-  imports: [DatePipe, DecimalPipe, KeyValuePipe, RouterLink],
+  imports: [DatePipe, DecimalPipe, KeyValuePipe, RouterLink, FormsModule],
   templateUrl: './research.html',
   styleUrl: './research.scss',
 })
@@ -22,6 +23,9 @@ export class ResearchComponent {
   protected readonly logoutBusy = signal(false);
   protected readonly selectedExperiment = signal<ResearchExperiment | null>(null);
   protected readonly selectedDimension = signal('direction');
+  protected readonly selectedTarget = signal<{ symbol: string; target_mode: string;
+    horizon_bars: number; target_sha256: string } | null>(null);
+  protected readonly hypothesis = signal('Cost-aware directional edge remains stable across chronological windows and realistic execution stresses.');
   protected readonly dimensions = [
     ['direction', 'Long vs Short'], ['session_name', 'Sessions'], ['entry_quarter', 'Time of Day'],
     ['weekday', 'Weekdays'], ['trend_regime', 'Trend Regimes'],
@@ -79,6 +83,40 @@ export class ResearchComponent {
     });
   }
 
+  protected chooseTarget(target: { symbol: string; target_mode: string;
+    horizon_bars: number; target_sha256: string }): void {
+    this.selectedTarget.set(target);
+  }
+
+  protected reserveLineage(): void {
+    const target = this.selectedTarget();
+    if (!target || this.hypothesis().trim().length < 20) {
+      this.message.set('Select a target and enter a hypothesis of at least 20 characters.'); return;
+    }
+    this.busy.set('lineage'); this.message.set('');
+    this.api.reserveResearchLineage(target.symbol, target.target_mode, target.horizon_bars,
+      this.hypothesis().trim()).pipe(finalize(() => this.busy.set(''))).subscribe({
+      next: () => { this.message.set(`${target.symbol} lineage reserved. Run a new boundary audit before the tournament.`); this.load(); },
+      error: (error) => this.message.set(error?.error?.message ?? 'Lineage reservation was blocked safely.'),
+    });
+  }
+
+  protected queueTournament(symbol: string): void {
+    this.busy.set(`tournament-${symbol}`); this.message.set('');
+    this.api.runSelectiveTournament(symbol).pipe(finalize(() => this.busy.set(''))).subscribe({
+      next: () => { this.message.set(`${symbol} selective tournament queued; the holdout remains untouched.`); this.load(); },
+      error: (error) => this.message.set(error?.error?.message ?? 'Tournament was blocked safely.'),
+    });
+  }
+
+  protected freezeLeader(symbol: string): void {
+    this.busy.set(`freeze-${symbol}`); this.message.set('');
+    this.api.freezeSelectiveCandidate(symbol).pipe(finalize(() => this.busy.set(''))).subscribe({
+      next: () => { this.message.set(`${symbol} exact tournament leader frozen. No holdout was consumed.`); this.load(); },
+      error: (error) => this.message.set(error?.error?.message ?? 'Candidate freeze was blocked safely.'),
+    });
+  }
+
   protected marketBlocker(market: ResearchStatusData['markets'][number]): string {
     if (market.model_status !== 'VALIDATED') return 'MODEL RESEARCH';
     if (market.quality_status === 'FAIL') return 'DATA QUALITY FAILURE';
@@ -108,6 +146,14 @@ export class ResearchComponent {
     this.api.evaluateHoldoutCandidate(candidateId).pipe(finalize(() => this.busy.set(''))).subscribe({
       next: (result: any) => { this.message.set(`Single-use evaluation completed: ${result.status}.`); this.load(); },
       error: () => this.message.set('Holdout evaluation was blocked; it was not retried.'),
+    });
+  }
+
+  protected approveHoldout(candidateId: string): void {
+    this.busy.set(`approve-${candidateId}`); this.message.set('');
+    this.api.approveHoldoutCandidate(candidateId).pipe(finalize(() => this.busy.set(''))).subscribe({
+      next: () => { this.message.set('Exact holdout-passed artifact approved for forward shadow only.'); this.load(); },
+      error: (error) => this.message.set(error?.error?.message ?? 'Owner approval was blocked safely.'),
     });
   }
 

@@ -46,10 +46,17 @@ def enqueue_evidence_refresh(settings: Settings, tenant_id: str, user_id: str) -
 
 def enqueue_protocol_audit(settings: Settings, tenant_id: str, user_id: str) -> dict[str, object]:
     bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key = hashlib.sha256(f"{tenant_id}:PROTOCOL_AUDIT:{bucket}".encode()).hexdigest()
     job_id = str(uuid4())
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT configuration_hash FROM app.research_lineages WHERE tenant_id=%s
+               ORDER BY market_id,created_at_utc""", (tenant_id,),
+        )
+        lineage_identity = ":".join(str(row["configuration_hash"]) for row in cursor.fetchall()) or "NO_LINEAGE"
+        key = hashlib.sha256(
+            f"{tenant_id}:PROTOCOL_AUDIT:{bucket}:{lineage_identity}".encode(),
+        ).hexdigest()
         cursor.execute(
             """SELECT research_job_id,status,progress_message FROM app.research_jobs
                WHERE tenant_id=%s AND idempotency_key=%s""", (tenant_id, key),
