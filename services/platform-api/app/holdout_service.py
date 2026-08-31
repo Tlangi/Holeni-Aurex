@@ -208,6 +208,29 @@ def _selective_labelable_count(causal: pd.DataFrame, horizon_bars: int) -> int:
                    for _, group in causal.groupby(boundaries.cumsum())))
 
 
+def selective_partition_evidence(
+    settings: Settings, development: pd.DataFrame, holdout: pd.DataFrame, *,
+    specification: TargetSpecification, fallback_spread: float,
+) -> tuple[int, int]:
+    """Count usable development and holdout rows without exposing holdout labels."""
+    development_features = build_selective_target(
+        _effective_costs(
+            development, fallback_spread, settings.model_round_trip_cost_bps,
+        ),
+        specification,
+        configured_cost_bps=settings.model_round_trip_cost_bps,
+    )
+    holdout_causal = add_features(
+        _effective_costs(
+            holdout, fallback_spread, settings.model_round_trip_cost_bps,
+        ),
+        labelled=False,
+    )
+    return len(development_features), _selective_labelable_count(
+        holdout_causal, specification.horizon_bars,
+    )
+
+
 def _freeze_selective_candidate(
     settings: Settings, tenant_id: str, request: FreezeCandidateRequest,
 ) -> dict[str, object]:
@@ -486,8 +509,11 @@ def reserve_research_lineage(
             raise ValueError("Run the selective research protocol audit before reserving a lineage")
         target_spec_id = str(target_row["research_target_spec_id"])
         cursor.execute(
-            """SELECT TOP (1) version FROM app.cost_model_versions
-               WHERE market_id=%s AND status='CURRENT' ORDER BY created_at_utc DESC""", (market_id,),
+            """SELECT TOP (1) c.version,b.p75_spread
+               FROM app.cost_model_versions c JOIN app.cost_model_buckets b
+                 ON b.cost_model_version_id=c.cost_model_version_id
+               WHERE c.market_id=%s AND c.status='CURRENT' AND b.bucket_type='OVERALL'
+               ORDER BY c.created_at_utc DESC""", (market_id,),
         )
         cost = cursor.fetchone()
         if not cost:
@@ -505,6 +531,20 @@ def reserve_research_lineage(
             frame, fraction=fraction, minimum_holdout_rows=settings.holdout_minimum_rows,
             minimum_development_rows=settings.model_minimum_rows,
         )
+        development_feature_rows, holdout_labelable_rows = selective_partition_evidence(
+            settings, development, holdout, specification=target_specification,
+            fallback_spread=float(cost["p75_spread"]),
+        )
+        if development_feature_rows < settings.model_minimum_rows:
+            raise ValueError(
+                "Insufficient target-eligible development evidence: "
+                f"need {settings.model_minimum_rows}, found {development_feature_rows}"
+            )
+        if holdout_labelable_rows < settings.holdout_minimum_rows:
+            raise ValueError(
+                "Insufficient causal holdout evidence: "
+                f"need {settings.holdout_minimum_rows}, found {holdout_labelable_rows}"
+            )
         identity = source_identity()
         configuration = {
             "market": symbol, "hypothesis": request.hypothesis,
@@ -523,6 +563,8 @@ def reserve_research_lineage(
             "development_end_utc": development.index.max().isoformat(),
             "holdout_start_utc": holdout.index.min().isoformat(),
             "holdout_end_utc": holdout.index.max().isoformat(),
+            "development_feature_rows": development_feature_rows,
+            "holdout_labelable_rows": holdout_labelable_rows,
         }
         configuration_hash = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode()).hexdigest()
         lineage_id = str(uuid4())
@@ -549,6 +591,8 @@ def reserve_research_lineage(
     return {
         "status": "RESERVED", "research_lineage_id": lineage_id, "market": symbol,
         "development_rows": len(development), "holdout_rows": len(holdout),
+        "development_feature_rows": development_feature_rows,
+        "holdout_labelable_rows": holdout_labelable_rows,
         "holdout_start_utc": holdout.index.min().isoformat(),
         "holdout_end_utc": holdout.index.max().isoformat(),
         "target": target_specification.configuration() | {"sha256": target_specification.digest},

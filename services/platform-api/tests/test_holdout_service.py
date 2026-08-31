@@ -10,7 +10,9 @@ from app.holdout_service import (
     _effective_costs,
     evidence_gates,
     select_holdout_split,
+    selective_partition_evidence,
 )
+from app.research_protocol import TARGET_CATALOG
 
 
 def _frame(rows: int) -> pd.DataFrame:
@@ -49,6 +51,45 @@ def test_lineage_reservation_requires_a_predeclared_market_target() -> None:
     )
     assert request.target_mode == "COST_AWARE_RETURN"
     assert request.target_horizon_bars == 4
+
+
+def test_partition_preflight_counts_causal_rows_without_holdout_labels() -> None:
+    settings = Settings(_env_file=None)
+    development, holdout = select_holdout_split(
+        _frame(3200), fraction=0.20, minimum_holdout_rows=500,
+        minimum_development_rows=2000,
+    )
+    specification = next(
+        item for item in TARGET_CATALOG["GERMANY40"]
+        if item.mode == "COST_AWARE_RETURN" and item.horizon_bars == 4
+    )
+    development_rows, holdout_rows = selective_partition_evidence(
+        settings, development, holdout, specification=specification,
+        fallback_spread=0.02,
+    )
+    assert development_rows >= settings.model_minimum_rows
+    assert holdout_rows >= settings.holdout_minimum_rows
+
+
+def test_partition_preflight_detects_feature_floor_hidden_by_raw_rows() -> None:
+    settings = Settings(_env_file=None)
+    frame = _frame(3000)
+    # Provider changes force causal feature warm-up resets that raw row counts miss.
+    frame["provider"] = [f"P{index // 100}" for index in range(len(frame))]
+    development, holdout = select_holdout_split(
+        frame, fraction=0.20, minimum_holdout_rows=500,
+        minimum_development_rows=2000,
+    )
+    specification = next(
+        item for item in TARGET_CATALOG["GERMANY40"]
+        if item.mode == "COST_AWARE_RETURN" and item.horizon_bars == 4
+    )
+    development_rows, _ = selective_partition_evidence(
+        settings, development, holdout, specification=specification,
+        fallback_spread=0.02,
+    )
+    assert len(development) >= settings.model_minimum_rows
+    assert development_rows < len(development)
 
 
 def test_empirical_spread_fills_missing_cost_without_lowering_configured_floor() -> None:
