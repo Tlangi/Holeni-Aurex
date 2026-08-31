@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pandas as pd
 
-from app.model_pipeline import add_features, chronological_evaluate, trading_metrics
+from app.model_pipeline import _market_frame, add_features, chronological_evaluate, trading_metrics
 
 
 def test_chronological_evaluation_never_leaks_validation_into_training() -> None:
@@ -60,6 +60,19 @@ def test_features_and_labels_do_not_cross_market_data_gaps() -> None:
     assert not any(timestamp in featured.index for timestamp in second[:13])
 
 
+def test_features_reset_when_provider_changes_without_a_timestamp_gap() -> None:
+    index = pd.date_range("2026-01-05T08:00:00Z", periods=160, freq="15min")
+    close = 1.1 + np.arange(len(index)) * 0.00001
+    frame = pd.DataFrame(
+        {"open": close, "high": close + 0.0002, "low": close - 0.0002,
+         "close": close, "tick_volume": np.full(len(index), 100),
+         "provider": ["DUKASCOPY"] * 80 + ["IG_LIGHTSTREAMER"] * 80}, index=index,
+    )
+    featured = add_features(frame, labelled=True)
+    assert not any(timestamp in featured.index for timestamp in index[80:93])
+    assert not any(timestamp in featured.index for timestamp in index[76:80])
+
+
 def test_optional_spread_nulls_use_cost_fallback_instead_of_dropping_training_rows() -> None:
     index = pd.date_range("2026-01-05T08:00:00Z", periods=100, freq="15min")
     close = 1.1 + np.arange(len(index)) * 0.00001
@@ -69,3 +82,21 @@ def test_optional_spread_nulls_use_cost_fallback_instead_of_dropping_training_ro
          "observed_spread_bps": np.full(len(index), np.nan)}, index=index,
     )
     assert len(add_features(frame, labelled=True)) > 50
+
+
+def test_market_frame_supports_dictionary_database_cursors() -> None:
+    class Cursor:
+        def execute(self, *_: object) -> None:
+            pass
+
+        def fetchall(self) -> list[dict[str, object]]:
+            return [{
+                "open_time_utc": datetime(2026, 1, 5, 8, 0),
+                "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.15,
+                "tick_count": 100, "source": "DUKASCOPY_BID_M15",
+                "observed_spread_bps": 1.2,
+            }]
+
+    frame = _market_frame(Cursor(), "market-id")
+    assert not frame.index.isna().any()
+    assert frame.iloc[0]["provider"] == "DUKASCOPY_BID_M15"

@@ -53,7 +53,12 @@ from app.trades import read_trade_history
 from app.readiness import read_trading_readiness
 from app.replay_engine import ReplayRequest, read_replay_runs, run_replay
 from app.research_evidence import sync_cost_models, sync_quality_evidence
-from app.research_jobs import enqueue_evidence_refresh, read_research_jobs
+from app.research_jobs import (
+    enqueue_evidence_refresh,
+    enqueue_protocol_audit,
+    enqueue_selective_tournament,
+    read_research_jobs,
+)
 from app.research_service import ResearchReplayRequest, read_research_status, run_research_replay
 from app.model_tournament import ModelTournamentRequest, run_and_record_tournament
 from app.trading_operations import (read_model_validation, read_order_intents, read_reconciliation_status,
@@ -255,6 +260,17 @@ def research_job_status(limit: int = 20, user: AuthenticatedUser = Depends(requi
     return JSONResponse(content=read_research_jobs(settings, user.tenant_id, limit))
 
 
+@app.post("/api/v1/research/protocol/audit", tags=["research"])
+def research_protocol_audit(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Queue development-only leakage and provider-boundary audits."""
+    if user.role.lower() not in {"owner", "administrator", "admin"}:
+        return JSONResponse(content={"status": "forbidden", "message": "Owner role is required",
+                                     "execution_enabled": False}, status_code=403)
+    return JSONResponse(content=enqueue_protocol_audit(
+        settings, user.tenant_id, user.user_id,
+    ), status_code=202)
+
+
 @app.post("/api/v1/research/replay", tags=["research"])
 def research_replay(
     body: ResearchReplayRequest, user: AuthenticatedUser = Depends(require_user),
@@ -276,6 +292,20 @@ def research_model_tournament(
         return JSONResponse(content=jsonable_encoder(
             run_and_record_tournament(settings, user.tenant_id, body.market, notes=body.notes),
         ))
+    except ValueError as exc:
+        return JSONResponse(content={"status": "blocked", "message": str(exc),
+                                     "execution_enabled": False}, status_code=409)
+
+
+@app.post("/api/v1/research/selective-tournament", tags=["research"])
+def research_selective_tournament(
+    body: ModelTournamentRequest, user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    """Queue a target-bound development-only tournament; never inspect holdout or execute."""
+    try:
+        return JSONResponse(content=jsonable_encoder(enqueue_selective_tournament(
+            settings, user.tenant_id, user.user_id, body.market, body.notes,
+        )), status_code=202)
     except ValueError as exc:
         return JSONResponse(content={"status": "blocked", "message": str(exc),
                                      "execution_enabled": False}, status_code=409)

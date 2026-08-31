@@ -301,6 +301,16 @@ export interface ResearchStatusData {
     source_start_utc: string; source_end_utc: string }>;
   experiments: ResearchExperiment[];
   holdout: HoldoutStatusData;
+  selective_protocol: {
+    protocol_version: string; execution_enabled: false; holdout_policy: string;
+    target_specifications: Array<{ symbol: string; target_mode: string; horizon_bars: number;
+      target_version: string; target_sha256: string; passed: boolean | null;
+      source_rows: number | null; feature_rows: number | null;
+      gates: Record<string, boolean> | null; evaluated_at_utc: string | null }>;
+    lifecycle_events: Array<{ candidate_lifecycle_event_id: string; symbol: string;
+      from_state: string; to_state: string; transition_reason: string;
+      evidence_sha256: string; changed_at_utc: string }>;
+  };
   holdout_policy: Record<string, string>;
 }
 
@@ -373,18 +383,15 @@ export class DashboardApi {
     return this.http.post('/api/v1/research/evidence/sync', {});
   }
 
+  runResearchProtocolAudit(): Observable<object> {
+    return this.http.post('/api/v1/research/protocol/audit', {});
+  }
+
   runResearchReplay(market: string, costModel: 'OPTIMISTIC' | 'NORMAL' | 'STRESSED' = 'NORMAL'): Observable<object> {
     return this.http.post('/api/v1/research/replay', {
       market, timeframe: 'M15', cost_model: costModel,
       segment_mode: 'CONTINUOUS_ONLY', max_candles: 100000,
       notes: 'Owner-requested diagnostic replay of the current rejected model',
-    });
-  }
-
-  freezeHoldoutCandidate(market = 'GERMANY40'): Observable<object> {
-    return this.http.post('/api/v1/research/holdout/freeze', {
-      market, holdout_fraction: 0.10,
-      notes: 'Owner-requested frozen candidate; broker execution remains disabled',
     });
   }
 

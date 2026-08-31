@@ -671,3 +671,30 @@ job UX. USD/JPY research remains development-only until those controls are done.
   Candidate training uses development history. Forward shadow evidence begins
   only after a frozen candidate passes governance and holdout acceptance; shadow
   observations do not train or repair a rejected candidate.
+
+## 24. Selective, target-bound model research
+
+- Migration 028 adds immutable target definitions, chronological-boundary
+  audits, lifecycle events, market-row quarantine, bounded recovery jobs and
+  model-monitoring snapshots.
+- Migration 029 binds the target checksum and protocol version to both the
+  research lineage and every selective tournament experiment.
+- `AUREX_SELECTIVE_RESEARCH_V4` implements market-specific ternary labels,
+  development-only calibration, cost-sensitive HOLD decisions, purged
+  walk-forward windows, bootstrap confidence intervals, regime slices and
+  realistic execution-cost stresses.
+- Provider changes reset rolling features and labels. The final holdout is
+  excluded before target construction and cannot be read by the tournament.
+- The market-specific challenger tournament runs through the durable SQL worker
+  and has no artifact, promotion or execution authority.
+- The Research UI displays target and audit evidence and no longer exposes the
+  misleading hard-coded Germany 40 freeze button.
+- Current leakage audits pass for all eight declared market/target combinations.
+  This proves dataset separation, not model profitability. No V4 lineage,
+  candidate, holdout evaluation, model promotion or broker order was created.
+
+Next evidence-dependent work is to reserve one explicit target-bound lineage per
+market, run the durable selective tournaments and freeze only a leader that
+passes every development gate. Point-in-time macro event regimes, drift alerts
+for an actually approved model and sustained forward-shadow evidence remain
+blocked until their prerequisite evidence exists.

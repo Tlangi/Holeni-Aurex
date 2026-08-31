@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.database import open_database
+from app.research_protocol_store import insert_lifecycle_event
 
 
 SAST = ZoneInfo("Africa/Johannesburg")
@@ -196,8 +197,35 @@ def _persist(
          result["win_rate"], result["profit_factor"], result["expectancy_zar"],
          result["maximum_drawdown_pct"], result["maximum_consecutive_losses"],
          result["cost_evidence_coverage"], result["realized_pnl_zar"],
-         bool(result["passed"]), json.dumps(result["blockers"])),
+        bool(result["passed"]), json.dumps(result["blockers"])),
     )
+    if bool(result["passed"]):
+        cursor.execute(
+            """SELECT mv.holdout_candidate_id,mv.research_lineage_id
+               FROM app.model_versions mv WHERE mv.model_version_id=%s""",
+            (result["model_version_id"],),
+        )
+        governed = cursor.fetchone() or {}
+        cursor.execute(
+            """SELECT COUNT(*) event_count FROM app.candidate_lifecycle_events
+               WHERE tenant_id=%s AND market_id=%s AND model_version_id=%s AND to_state='PROMOTED'""",
+            (tenant_id, market_id, result["model_version_id"]),
+        )
+        if int((cursor.fetchone() or {}).get("event_count") or 0) == 0:
+            insert_lifecycle_event(
+                cursor, tenant_id=tenant_id, market_id=market_id,
+                research_lineage_id=str(governed["research_lineage_id"])
+                if governed.get("research_lineage_id") else None,
+                holdout_candidate_id=str(governed["holdout_candidate_id"])
+                if governed.get("holdout_candidate_id") else None,
+                model_version_id=str(result["model_version_id"]),
+                from_state="FORWARD_SHADOW", to_state="PROMOTED",
+                reason="Sustained forward-shadow policy passed",
+                evidence={"policy": result["policy"], "checks": result["checks"],
+                          "closed_trades": result["closed_trades"],
+                          "trading_days": result["trading_days"],
+                          "execution_enabled": False},
+            )
 
 
 def _json_payload(value: object) -> object:

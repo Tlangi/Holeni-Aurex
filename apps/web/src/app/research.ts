@@ -35,6 +35,11 @@ export class ResearchComponent {
     return experiment?.decomposition?.[this.selectedDimension()] ?? [];
   });
 
+  protected protocolPassed(research: ResearchStatusData): string {
+    const rows = research.selective_protocol.target_specifications;
+    return `${rows.filter((item) => item.passed === true).length}/${rows.length}`;
+  }
+
   constructor() { this.load(); }
 
   protected load(): void {
@@ -66,6 +71,21 @@ export class ResearchComponent {
     });
   }
 
+  protected runProtocolAudit(): void {
+    this.busy.set('protocol-audit'); this.message.set('');
+    this.api.runResearchProtocolAudit().pipe(finalize(() => this.busy.set(''))).subscribe({
+      next: () => { this.message.set('Leakage and provider-boundary audit queued. No holdout was accessed.'); this.load(); },
+      error: () => this.message.set('Protocol audit could not be queued; execution remains blocked.'),
+    });
+  }
+
+  protected marketBlocker(market: ResearchStatusData['markets'][number]): string {
+    if (market.model_status !== 'VALIDATED') return 'MODEL RESEARCH';
+    if (market.quality_status === 'FAIL') return 'DATA QUALITY FAILURE';
+    if (market.quality_status === 'CLOSED' || market.quality_status === 'OPEN_GRACE') return 'SESSION DEFERRED';
+    return 'FORWARD SHADOW';
+  }
+
   protected logout(): void {
     if (this.logoutBusy()) return;
     this.logoutBusy.set(true);
@@ -80,19 +100,6 @@ export class ResearchComponent {
     this.api.runResearchReplay(symbol).pipe(finalize(() => this.busy.set(''))).subscribe({
       next: () => { this.message.set(`${symbol} diagnostic replay completed.`); this.load(); },
       error: () => this.message.set(`${symbol} replay failed; no strategy or execution setting changed.`),
-    });
-  }
-
-  protected freezeGermanyCandidate(): void {
-    this.busy.set('holdout-freeze'); this.message.set('');
-    this.api.freezeHoldoutCandidate().pipe(finalize(() => this.busy.set(''))).subscribe({
-      next: (result: any) => {
-        this.message.set(result.status === 'DATA_BLOCKED'
-          ? `Holdout remains blocked: ${result.available_holdout_rows}/${result.required_holdout_rows} independent rows. No holdout was consumed.`
-          : `Germany 40 candidate status: ${result.status}.`);
-        this.load();
-      },
-      error: () => this.message.set('Candidate freeze failed safely; no holdout or execution state changed.'),
     });
   }
 

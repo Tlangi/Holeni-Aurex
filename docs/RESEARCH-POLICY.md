@@ -31,9 +31,9 @@ database and application:
 5. Passing a holdout remains non-promotable. A separate reviewed transition is
    required before market-specific forward shadow can begin.
 
-Germany 40 is currently `DATA_BLOCKED`: a split that preserves 2,000 development
-rows provides only 234 feature-complete holdout rows against the required 500.
-The holdout has not been consumed.
+All markets must reserve at least 2,000 feature-complete development rows and 500
+untouched holdout rows. Availability is evaluated at reservation time; no target,
+feature, cost or provider boundary may be changed after that reservation.
 
 ## Permitted research retraining
 
@@ -49,11 +49,47 @@ Forward shadow still requires 30 closed trades over 10 South African trading
 days, profit factor at least 1.10, positive cost-aware expectancy, drawdown at
 most 3%, no more than four consecutive losses and complete cost evidence.
 
+## Selective research protocol V4
+
+Migrations 028 and 029 introduce target-bound research governance:
+
+- Each market has predeclared cost-aware and volatility-adjusted BUY/SELL/HOLD
+  targets with a market-specific horizon. Germany 40 targets are regular-session
+  only.
+- A lineage now binds the exact target checksum and protocol version before it
+  reserves the final holdout. The target cannot be silently changed afterward.
+- Dataset audits verify timestamp uniqueness, causal feature allow-listing,
+  provider-boundary resets, chronological folds, label-horizon purging and
+  holdout exclusion. Audits are immutable SQL evidence.
+- Selective tournaments are durable background jobs. They compare logistic
+  regression, random forest, histogram gradient boosting, LightGBM, XGBoost,
+  CatBoost and a disagreement-aware ensemble on development data only.
+- Probabilities are calibrated on trailing development data. A decision becomes
+  HOLD unless estimated edge clears empirical cost plus a safety/uncertainty
+  buffer. Ensemble disagreement also becomes HOLD.
+- Evaluation records minimum-window results, bootstrap expectancy intervals,
+  volatility/trend/session slices and P50/P75/P90/P95 cost, slippage, delayed
+  execution and funding stress. A result depending on one exceptional window is
+  rejected.
+- Quarantined provider rows and bounded, session-aware recovery jobs are stored
+  separately. Recovery never fills prices synthetically and never loops through
+  historical API quota.
+
+The V4 lifecycle remains `RESEARCH → ELIGIBLE_TO_FREEZE → FROZEN →
+HOLDOUT_REVIEW → OWNER_APPROVED → FORWARD_SHADOW → PROMOTED`. Retraining a
+forward-shadow candidate creates a new lineage and model version; it cannot alter
+the candidate being evaluated.
+
+Risk-on/risk-off and pre/post-event regimes remain deferred until Aurex has an
+audited, point-in-time macro dataset. They must not be reconstructed from
+information published after a prediction timestamp.
+
 ## Canonical governance introduced by migration 027
 
 - Before a tournament, the owner pre-registers the hypothesis, chosen features,
-  model families and policy through `POST /api/v1/research/lineage/reserve`. This
-  reserves exact development and untouched holdout timestamps.
+  model families, target mode and target horizon through
+  `POST /api/v1/research/lineage/reserve`. This reserves exact development and
+  untouched holdout timestamps.
 - `FUTURE_CLOSE_DIRECTION_4_M15_V2` is the canonical 4-bar/60-minute label.
   Purging, label metadata and feature-row calculations use the same definition.
 - Scheduled training and tournaments may create development candidates, but can

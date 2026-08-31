@@ -7,6 +7,9 @@
       <button type="button" [disabled]="busy() !== ''" (click)="syncEvidence()">
         {{ busy() === 'sync' ? 'Starting…' : 'Refresh evidence' }}
       </button>
+      <button type="button" [disabled]="busy() !== ''" (click)="runProtocolAudit()">
+        {{ busy() === 'protocol-audit' ? 'Queueing audit…' : 'Audit research boundaries' }}
+      </button>
       <button class="logout" type="button" [disabled]="logoutBusy()" (click)="logout()">
         {{ logoutBusy() ? 'Logging out…' : 'Logout' }}
       </button>
@@ -32,12 +35,30 @@
           <div class="row"><span>Execution quality</span><strong>{{ quality(market.symbol)?.overall_execution_quality ?? '—' }}</strong></div>
           <div class="row"><span>Cost model</span><strong>{{ cost(market.symbol)?.version ?? '—' }}</strong></div>
           <div class="row"><span>Spread observations</span><strong>{{ cost(market.symbol)?.observation_count ?? 0 }}</strong></div>
-          <div class="blockers"><span>Actual blocker</span><strong>{{ market.model_status !== 'VALIDATED' ? 'MODEL NOT VALIDATED' : market.quality_status !== 'PASS' ? 'EXECUTION QUALITY' : 'FORWARD SHADOW' }}</strong></div>
+          <div class="blockers"><span>Current classification</span><strong>{{ marketBlocker(market) }}</strong></div>
           <button type="button" [disabled]="busy() !== ''" (click)="runReplay(market.symbol)">
             {{ busy() === market.symbol ? 'Running chronological replay…' : 'Run diagnostic replay' }}
           </button>
         </article>
       }
+    </section>
+
+    <section class="panel protocol-panel">
+      <div class="panel-heading"><div><p>SELECTIVE RESEARCH V4</p><h2>Targets & leakage controls</h2></div>
+        <span>{{ research.selective_protocol.protocol_version }} · holdout untouched</span></div>
+      <div class="protocol-summary">
+        <div><span>Specifications</span><strong>{{ research.selective_protocol.target_specifications.length }}</strong></div>
+        <div><span>Audits passed</span><strong>{{ protocolPassed(research) }}</strong></div>
+        <div><span>Lifecycle events</span><strong>{{ research.selective_protocol.lifecycle_events.length }}</strong></div>
+        <div><span>Execution capability</span><strong>NONE</strong></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Target</th><th>Horizon</th><th>Feature rows</th><th>Leakage audit</th><th>Evaluated</th></tr></thead>
+        <tbody>@for (spec of research.selective_protocol.target_specifications; track spec.target_sha256) {
+          <tr><td>{{ spec.symbol }}</td><td>{{ spec.target_mode }}</td><td>{{ spec.horizon_bars }} bars</td>
+            <td>{{ (spec.feature_rows ?? 0) | number }}</td><td><span class="audit-status" [class.pass]="spec.passed">{{ spec.passed === true ? 'PASS' : spec.passed === false ? 'FAIL' : 'PENDING' }}</span></td>
+            <td>{{ spec.evaluated_at_utc ? (spec.evaluated_at_utc | date:'short':'Africa/Johannesburg') : '—' }}</td></tr>
+        } @empty { <tr><td colspan="6">Target specifications have not been registered.</td></tr> }</tbody>
+      </table></div>
     </section>
 
     <section class="panel holdout-panel">
@@ -72,9 +93,8 @@
           <div class="empty candidate-empty">No candidate can be frozen until both independent evidence floors are satisfied.</div>
         }
       </div>
-      <button class="holdout-refresh" type="button" [disabled]="busy() !== ''" (click)="freezeGermanyCandidate()">
-        {{ busy() === 'holdout-freeze' ? 'Checking evidence floors…' : 'Recheck Germany 40 candidate readiness' }}
-      </button>
+      <p class="holdout-guidance">Candidate freezing is unavailable until a target-bound lineage and its
+        durable development tournament have passed every gate. This page cannot bypass that sequence.</p>
     </section>
 
     <section class="panel">

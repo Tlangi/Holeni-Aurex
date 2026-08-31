@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -93,7 +94,9 @@ def import_file(
         "invalid_rows": 0, "duplicate_timestamps": 0, "future_or_partial": 0,
         "flat_candles": 0, "regular_session_m5": 0, "regular_session_flat": 0,
         "invalid_reasons": {}, "first_utc": None, "last_utc": None,
+        "quarantined_rows": 0,
     }
+    quarantine_rows: list[tuple[int, dict[str, str], str, str]] = []
     m5_batch: list[Candle] = []
     m15_batch: list[Candle] = []
     bucket_rows: list[Candle] = []
@@ -105,7 +108,7 @@ def import_file(
         reader = csv.DictReader(handle)
         if reader.fieldnames != ["timestamp", "open", "high", "low", "close"]:
             raise ValueError(f"Unexpected Dukascopy CSV columns: {reader.fieldnames}")
-        for raw in reader:
+        for row_number, raw in enumerate(reader, start=2):
             stats["rows_read"] = int(stats["rows_read"]) + 1
             try:
                 candle = parse_candle(raw, market, holidays)
@@ -115,13 +118,20 @@ def import_file(
                 assert isinstance(reasons, dict)
                 reason = str(exc)[:120] or type(exc).__name__
                 reasons[reason] = int(reasons.get(reason, 0)) + 1
+                if len(quarantine_rows) < 1000:
+                    quarantine_rows.append((row_number, raw, _rejection_code(reason), reason))
                 continue
             if candle.opened > complete_before:
                 stats["future_or_partial"] = int(stats["future_or_partial"]) + 1
+                if len(quarantine_rows) < 1000:
+                    quarantine_rows.append((row_number, raw, "FUTURE_OR_PARTIAL", "Candle is not complete"))
                 continue
             if previous is not None and candle.opened <= previous:
                 if candle.opened == previous:
                     stats["duplicate_timestamps"] = int(stats["duplicate_timestamps"]) + 1
+                    if len(quarantine_rows) < 1000:
+                        quarantine_rows.append((row_number, raw, "DUPLICATE_TIMESTAMP",
+                                                "Duplicate timestamp within source file"))
                     continue
                 raise ValueError("Dukascopy rows are not in chronological order")
             previous = candle.opened
@@ -188,9 +198,42 @@ def import_file(
                  stats["rows_read"], stats["accepted_m5"], stats["accepted_m15"],
                  stats["invalid_rows"], counts.get("M5", 0), counts.get("M15", 0)),
             )
+            _persist_quarantine(
+                cursor, market_id=str(market["market_id"]), source_reference=path.name,
+                source_sha256=digest, rows=quarantine_rows,
+            )
+            stats["quarantined_rows"] = len(quarantine_rows)
             connection.commit()
     stats["dry_run"] = dry_run
     return stats
+
+
+def _rejection_code(reason: str) -> str:
+    normalized = reason.lower()
+    if "ohlc" in normalized:
+        return "INVALID_OHLC"
+    if "positive" in normalized or "finite" in normalized:
+        return "NON_POSITIVE_OR_NON_FINITE"
+    if "aligned" in normalized or "timestamp" in normalized:
+        return "INVALID_TIMESTAMP"
+    return "PARSE_ERROR"
+
+
+def _persist_quarantine(
+    cursor: object, *, market_id: str, source_reference: str, source_sha256: str,
+    rows: list[tuple[int, dict[str, str], str, str]],
+) -> None:
+    if not rows:
+        return
+    cursor.executemany(
+        """INSERT app.market_data_quarantine
+             (market_data_quarantine_id,market_id,provider,source_reference,source_sha256,
+              source_row_number,rejection_code,rejection_detail,raw_payload_json,status)
+           VALUES(%s,%s,'DUKASCOPY',%s,%s,%s,%s,%s,%s,'QUARANTINED')""",
+        [(str(uuid4()), market_id, source_reference, source_sha256, row_number,
+          code, detail, json.dumps(raw, sort_keys=True))
+         for row_number, raw, code, detail in rows],
+    )
 
 
 def file_sha256(path: Path) -> str:

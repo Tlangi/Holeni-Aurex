@@ -70,6 +70,10 @@ def add_features(
     if expected_interval is None:
         expected_interval = pd.Timedelta(15, unit="min")
     gaps = data.index.to_series().diff().ne(expected_interval)
+    if "provider" in data.columns:
+        # A provider transition is an explicit information boundary even when
+        # both providers happen to have adjacent timestamps.
+        gaps = gaps | data["provider"].astype(str).ne(data["provider"].astype(str).shift(1))
     segments = gaps.cumsum()
     prepared = [
         _add_features_segment(segment, horizon=horizon, labelled=labelled)
@@ -346,7 +350,7 @@ def chronological_evaluate(
 
 def _market_frame(cursor: object, market_id: str) -> pd.DataFrame:
     cursor.execute(
-        """SELECT open_time_utc,[open],high,low,[close],tick_count,
+        """SELECT open_time_utc,[open],high,low,[close],tick_count,source,
                   CASE WHEN spread_close IS NOT NULL AND [close]>0
                        THEN spread_close/[close]*10000 END observed_spread_bps
            FROM app.candles
@@ -356,7 +360,13 @@ def _market_frame(cursor: object, market_id: str) -> pd.DataFrame:
         (market_id,),
     )
     rows = cursor.fetchall()
-    frame = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "tick_volume", "observed_spread_bps"])
+    columns = ["time", "open", "high", "low", "close", "tick_volume", "provider", "observed_spread_bps"]
+    if rows and isinstance(rows[0], dict):
+        frame = pd.DataFrame(rows).rename(columns={
+            "open_time_utc": "time", "tick_count": "tick_volume", "source": "provider",
+        })[columns]
+    else:
+        frame = pd.DataFrame(rows, columns=columns)
     if frame.empty:
         return frame
     frame["time"] = pd.to_datetime(frame["time"], utc=True)

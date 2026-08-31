@@ -5,7 +5,7 @@ import pandas as pd
 
 from app.config import Settings
 from app.model_pipeline import chronological_evaluate
-from app.model_tournament import ModelTournamentRequest, challengers, run_tournament
+from app.model_tournament import Challenger, ModelTournamentRequest, challengers, run_selective_tournament, run_tournament
 
 
 def _frame(rows: int = 2300) -> pd.DataFrame:
@@ -49,3 +49,22 @@ def test_tournament_compares_supported_models_without_promotion() -> None:
 def test_tournament_request_normalizes_supported_market() -> None:
     request = ModelTournamentRequest(market=" usdjpy ")
     assert request.market == "USDJPY"
+
+
+def test_selective_tournament_is_market_specific_and_never_promotes() -> None:
+    candidate = Challenger(
+        "LOGISTIC_ONLY", "Logistic only", 1,
+        lambda: __import__("sklearn.linear_model", fromlist=["LogisticRegression"]).LogisticRegression(
+            max_iter=500, random_state=42,
+        ), {},
+    )
+    settings = Settings(model_minimum_rows=2000, model_walk_forward_windows=3)
+    from app.research_protocol import TARGET_CATALOG
+    result = run_selective_tournament(
+        _frame(2400), "EURUSD", settings, candidate_set=(candidate,),
+        target_set=(TARGET_CATALOG["EURUSD"][0],),
+    )
+    assert result["market"] == "EURUSD"
+    assert result["selection_scope"] == "DEVELOPMENT_ONLY"
+    assert result["holdout_consumed"] is False
+    assert result["execution_enabled"] is False

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.dukascopy_import import Candle, aggregate_bucket, identify_file, parse_candle
+from app.dukascopy_import import Candle, _rejection_code, aggregate_bucket, identify_file, parse_candle
 
 
 def market() -> dict[str, object]:
@@ -34,6 +34,12 @@ def test_parse_requires_valid_aligned_ohlc() -> None:
             {"timestamp": "1704067200000", "open": "1.10", "high": "1.09",
              "low": "1.08", "close": "1.105"}, market(), set(),
         )
+
+
+def test_quarantine_rejection_codes_are_stable() -> None:
+    assert _rejection_code("Invalid OHLC envelope") == "INVALID_OHLC"
+    assert _rejection_code("Prices must be finite and positive") == "NON_POSITIVE_OR_NON_FINITE"
+    assert _rejection_code("Timestamp is not aligned") == "INVALID_TIMESTAMP"
 
 
 def test_only_complete_three_candle_buckets_aggregate() -> None:

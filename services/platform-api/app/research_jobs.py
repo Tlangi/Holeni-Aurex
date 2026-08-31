@@ -10,6 +10,8 @@ from uuid import uuid4
 from app.config import Settings
 from app.database import open_database
 from app.research_evidence import sync_cost_models, sync_quality_evidence
+from app.research_protocol_store import run_protocol_boundary_audits
+from app.model_tournament import run_and_record_selective_tournament
 
 
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
@@ -42,6 +44,77 @@ def enqueue_evidence_refresh(settings: Settings, tenant_id: str, user_id: str) -
             "execution_enabled": False}
 
 
+def enqueue_protocol_audit(settings: Settings, tenant_id: str, user_id: str) -> dict[str, object]:
+    bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = hashlib.sha256(f"{tenant_id}:PROTOCOL_AUDIT:{bucket}".encode()).hexdigest()
+    job_id = str(uuid4())
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT research_job_id,status,progress_message FROM app.research_jobs
+               WHERE tenant_id=%s AND idempotency_key=%s""", (tenant_id, key),
+        )
+        current = cursor.fetchone()
+        if current:
+            return {"job_id": str(current["research_job_id"]), "status": current["status"],
+                    "message": current["progress_message"] or "Protocol audit already registered",
+                    "execution_enabled": False}
+        cursor.execute(
+            """INSERT app.research_jobs
+                 (research_job_id,tenant_id,job_type,request_json,status,idempotency_key,
+                  requested_by_user_id,progress_message)
+               VALUES(%s,%s,'PROTOCOL_AUDIT','{}','QUEUED',%s,%s,
+                      'Waiting for leakage and boundary audit')""",
+            (job_id, tenant_id, key, user_id),
+        )
+        connection.commit()
+    return {"job_id": job_id, "status": "QUEUED", "message": "Protocol audit queued",
+            "execution_enabled": False}
+
+
+def enqueue_selective_tournament(
+    settings: Settings, tenant_id: str, user_id: str, market: str, notes: str,
+) -> dict[str, object]:
+    symbol = market.strip().upper()
+    request = {"market": symbol, "notes": notes}
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT TOP (1) research_lineage_id,configuration_hash
+               FROM app.research_lineages WHERE tenant_id=%s
+                 AND market_id=(SELECT market_id FROM app.markets WHERE symbol=%s AND enabled=1)
+                 AND status='RESERVED' AND research_target_spec_id IS NOT NULL
+               ORDER BY created_at_utc DESC""", (tenant_id, symbol),
+        )
+        lineage = cursor.fetchone()
+        if not lineage:
+            raise ValueError("Reserve a target-bound immutable lineage before queueing a tournament")
+        key = hashlib.sha256(
+            f"{tenant_id}:SELECTIVE_TOURNAMENT:{lineage['configuration_hash']}".encode(),
+        ).hexdigest()
+        cursor.execute(
+            """SELECT research_job_id,status,progress_message FROM app.research_jobs
+               WHERE tenant_id=%s AND idempotency_key=%s""", (tenant_id, key),
+        )
+        current = cursor.fetchone()
+        if current:
+            return {"job_id": str(current["research_job_id"]), "status": current["status"],
+                    "message": current["progress_message"] or "Tournament already registered",
+                    "execution_enabled": False}
+        job_id = str(uuid4())
+        cursor.execute(
+            """INSERT app.research_jobs
+                 (research_job_id,tenant_id,job_type,request_json,status,idempotency_key,
+                  requested_by_user_id,progress_message)
+               VALUES(%s,%s,'SELECTIVE_TOURNAMENT',%s,'QUEUED',%s,%s,
+                      'Waiting for target-bound development tournament')""",
+            (job_id, tenant_id, json.dumps(request), key, user_id),
+        )
+        connection.commit()
+    return {"job_id": job_id, "status": "QUEUED", "message": "Selective tournament queued",
+            "market": symbol, "execution_enabled": False}
+
+
 def process_one_research_job(settings: Settings) -> dict[str, object] | None:
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
@@ -52,7 +125,7 @@ def process_one_research_job(settings: Settings) -> dict[str, object] | None:
                    ORDER BY created_at_utc
                )
                UPDATE claimable SET status='RUNNING',attempt_count=attempt_count+1,lease_owner=%s,
-                   lease_expires_at_utc=DATEADD(minute,10,SYSUTCDATETIME()),
+                   lease_expires_at_utc=DATEADD(minute,60,SYSUTCDATETIME()),
                    started_at_utc=COALESCE(started_at_utc,SYSUTCDATETIME()),progress_message='Running'
                OUTPUT inserted.research_job_id,inserted.tenant_id,inserted.job_type,inserted.request_json""",
             (WORKER_ID,),
@@ -63,16 +136,42 @@ def process_one_research_job(settings: Settings) -> dict[str, object] | None:
         return None
     job_id = str(job["research_job_id"])
     try:
-        if job["job_type"] != "EVIDENCE_SYNC":
+        if job["job_type"] == "EVIDENCE_SYNC":
+            quality = sync_quality_evidence(settings)
+            costs = sync_cost_models(settings)
+            result = {"quality_markets": len(quality), "cost_markets": len(costs),
+                      "execution_enabled": False}
+            message = "Evidence refresh completed"
+        elif job["job_type"] == "PROTOCOL_AUDIT":
+            audits = run_protocol_boundary_audits(settings, str(job["tenant_id"]))
+            result = {"audit_count": len(audits),
+                      "passed": sum(item.get("status") == "PASS" for item in audits),
+                      "failed": sum(item.get("status") == "FAIL" for item in audits),
+                      "execution_enabled": False}
+            message = "Leakage and boundary audit completed"
+        elif job["job_type"] == "SELECTIVE_TOURNAMENT":
+            request = json.loads(job["request_json"])
+            tournament = run_and_record_selective_tournament(
+                settings, str(job["tenant_id"]), str(request["market"]),
+                notes=str(request.get("notes") or "Target-bound selective tournament"),
+            )
+            result = {
+                "experiment_id": tournament["experiment_id"],
+                "market": tournament["market"],
+                "research_leader": tournament["research_leader"],
+                "leader_target_sha256": tournament["leader_target_sha256"],
+                "leader_passed_all_development_gates": tournament[
+                    "leader_passed_all_development_gates"
+                ],
+                "holdout_consumed": False, "execution_enabled": False,
+            }
+            message = "Selective development tournament completed"
+        else:
             raise ValueError("Unsupported durable research job type")
-        quality = sync_quality_evidence(settings)
-        costs = sync_cost_models(settings)
-        result = {"quality_markets": len(quality), "cost_markets": len(costs),
-                  "execution_enabled": False}
-        status, message, error = "SUCCEEDED", "Evidence refresh completed", None
+        status, error = "SUCCEEDED", None
     except Exception as exc:
         result = {"execution_enabled": False}
-        status, message, error = "FAILED", "Evidence refresh failed", type(exc).__name__
+        status, message, error = "FAILED", "Research job failed", f"{type(exc).__name__}: {exc}"
     with open_database(settings) as connection:
         cursor = connection.cursor()
         cursor.execute(

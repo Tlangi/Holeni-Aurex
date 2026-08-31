@@ -41,10 +41,16 @@ from app.model_governance import (
     purge_rows_for_horizon,
     source_identity,
 )
+from app.research_protocol_store import insert_lifecycle_event
+from app.research_protocol import PROTOCOL_VERSION, TARGET_CATALOG
 
 
 FEATURE_VERSION_FALLBACK = "FEATURES_V1"
 HORIZON = LABEL_HORIZON_BARS
+SELECTIVE_MODEL_FAMILIES = {
+    "LOGISTIC_REGRESSION", "RANDOM_FOREST", "AUREX_HIST_GRADIENT_BOOSTING",
+    "LIGHTGBM", "XGBOOST", "CATBOOST", "CALIBRATED_DISAGREEMENT_ENSEMBLE",
+}
 
 
 class FreezeCandidateRequest(BaseModel):
@@ -72,7 +78,9 @@ class ReserveResearchLineageRequest(BaseModel):
     market: str = Field(pattern="^(EURUSD|GBPUSD|USDJPY|GERMANY40)$")
     hypothesis: str = Field(min_length=20, max_length=1000)
     chosen_features: list[str] = Field(default_factory=lambda: list(FEATURES))
-    model_families: list[str] = Field(default_factory=lambda: ["HGB", "LOGISTIC", "RANDOM_FOREST"])
+    model_families: list[str] = Field(default_factory=lambda: sorted(SELECTIVE_MODEL_FAMILIES))
+    target_mode: str = Field(pattern="^(COST_AWARE_RETURN|VOLATILITY_ADJUSTED)$")
+    target_horizon_bars: int = Field(ge=1, le=96)
     holdout_fraction: float | None = Field(default=None, ge=0.10, le=0.30)
 
 
@@ -90,6 +98,8 @@ def _serial(value: object) -> object:
 
 def _frame_digest(frame: pd.DataFrame) -> str:
     columns = ["open", "high", "low", "close", "tick_volume", "observed_spread_bps"]
+    if "provider" in frame.columns:
+        columns.append("provider")
     canonical = frame[columns].copy().sort_index()
     canonical.index = canonical.index.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return hashlib.sha256(canonical.to_csv(index=True, float_format="%.12g").encode()).hexdigest()
@@ -180,7 +190,22 @@ def reserve_research_lineage(
     unknown = sorted(set(request.chosen_features) - set(FEATURES))
     if unknown:
         raise ValueError(f"Unknown feature(s): {', '.join(unknown)}")
+    unknown_models = sorted(set(request.model_families) - SELECTIVE_MODEL_FAMILIES)
+    if unknown_models:
+        raise ValueError(f"Unknown model family/families: {', '.join(unknown_models)}")
+    if not request.model_families:
+        raise ValueError("At least one predeclared model family is required")
     symbol = request.market.upper()
+    target_specification = next((
+        specification for specification in TARGET_CATALOG[symbol]
+        if specification.mode == request.target_mode
+        and specification.horizon_bars == request.target_horizon_bars
+    ), None)
+    if target_specification is None:
+        allowed = ", ".join(
+            f"{item.mode}/{item.horizon_bars}" for item in TARGET_CATALOG[symbol]
+        )
+        raise ValueError(f"Target is not predeclared for {symbol}; allowed: {allowed}")
     fraction = request.holdout_fraction or settings.holdout_fraction
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
@@ -189,6 +214,15 @@ def reserve_research_lineage(
         if not market:
             raise ValueError("Enabled market is required")
         market_id = str(market["market_id"])
+        cursor.execute(
+            """SELECT research_target_spec_id FROM app.research_target_specs
+               WHERE market_id=%s AND target_sha256=%s AND active=1""",
+            (market_id, target_specification.digest),
+        )
+        target_row = cursor.fetchone()
+        if not target_row:
+            raise ValueError("Run the selective research protocol audit before reserving a lineage")
+        target_spec_id = str(target_row["research_target_spec_id"])
         cursor.execute(
             """SELECT TOP (1) version FROM app.cost_model_versions
                WHERE market_id=%s AND status='CURRENT' ORDER BY created_at_utc DESC""", (market_id,),
@@ -213,10 +247,16 @@ def reserve_research_lineage(
         configuration = {
             "market": symbol, "hypothesis": request.hypothesis,
             "chosen_features": request.chosen_features, "model_families": request.model_families,
+            "research_protocol_version": PROTOCOL_VERSION,
+            "research_target_spec_id": target_spec_id,
+            "target_specification": target_specification.configuration(),
+            "target_sha256": target_specification.digest,
             "validation_policy_version": VALIDATION_POLICY_VERSION,
-            "feature_version": FEATURE_VERSION_FALLBACK, "label_version": LABEL_VERSION,
-            "label_horizon_bars": HORIZON, "label_horizon_minutes": LABEL_HORIZON_MINUTES,
-            "label_definition_hash": LABEL_DEFINITION_HASH, "cost_model_version": str(cost["version"]),
+            "feature_version": FEATURE_VERSION_FALLBACK, "label_version": target_specification.version,
+            "label_horizon_bars": target_specification.horizon_bars,
+            "label_horizon_minutes": target_specification.horizon_bars * 15,
+            "label_definition_hash": target_specification.digest,
+            "cost_model_version": str(cost["version"]),
             "development_start_utc": development.index.min().isoformat(),
             "development_end_utc": development.index.max().isoformat(),
             "holdout_start_utc": holdout.index.min().isoformat(),
@@ -230,15 +270,18 @@ def reserve_research_lineage(
                   model_families_json,validation_policy_version,feature_version,label_version,
                   label_horizon_bars,label_horizon_minutes,label_definition_hash,cost_model_version,
                   source_identity,dirty_worktree,configuration_hash,development_start_utc,
-                  development_end_utc,holdout_start_utc,holdout_end_utc,status,created_by_user_id)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'RESERVED',%s)""",
+                  development_end_utc,holdout_start_utc,holdout_end_utc,status,created_by_user_id,
+                  research_target_spec_id,research_protocol_version)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'RESERVED',%s,%s,%s)""",
             (lineage_id, tenant_id, market_id, request.hypothesis,
              json.dumps(request.chosen_features), json.dumps(request.model_families),
-             VALIDATION_POLICY_VERSION, FEATURE_VERSION_FALLBACK, LABEL_VERSION, HORIZON,
-             LABEL_HORIZON_MINUTES, LABEL_DEFINITION_HASH, str(cost["version"]),
+             VALIDATION_POLICY_VERSION, FEATURE_VERSION_FALLBACK, target_specification.version,
+             target_specification.horizon_bars, target_specification.horizon_bars * 15,
+             target_specification.digest, str(cost["version"]),
              str(identity["source_identity"]), int(bool(identity["dirty_worktree"])),
              configuration_hash, development.index.min().to_pydatetime(), development.index.max().to_pydatetime(),
-             holdout.index.min().to_pydatetime(), holdout.index.max().to_pydatetime(), user_id),
+             holdout.index.min().to_pydatetime(), holdout.index.max().to_pydatetime(), user_id,
+             target_spec_id, PROTOCOL_VERSION),
         )
         connection.commit()
     return {
@@ -246,6 +289,8 @@ def reserve_research_lineage(
         "development_rows": len(development), "holdout_rows": len(holdout),
         "holdout_start_utc": holdout.index.min().isoformat(),
         "holdout_end_utc": holdout.index.max().isoformat(),
+        "target": target_specification.configuration() | {"sha256": target_specification.digest},
+        "research_protocol_version": PROTOCOL_VERSION,
         "holdout_consumed": False, "execution_enabled": False,
     }
 
@@ -279,7 +324,8 @@ def freeze_candidate(
         cost = cursor.fetchone()
         cursor.execute(
             """SELECT TOP (1) research_lineage_id,development_start_utc,development_end_utc,
-                      holdout_start_utc,holdout_end_utc,configuration_hash
+                      holdout_start_utc,holdout_end_utc,configuration_hash,
+                      research_protocol_version,research_target_spec_id
                FROM app.research_lineages
                WHERE tenant_id=%s AND market_id=%s AND status='RESERVED'
                ORDER BY created_at_utc DESC""", (tenant_id, str(market_id)),
@@ -289,6 +335,11 @@ def freeze_candidate(
         raise ValueError("A current empirical cost model is required before freezing")
     if not lineage:
         raise ValueError("Reserve an immutable research lineage and holdout before freezing a candidate")
+    if len(lineage) > 6 and str(lineage[6] or "") == PROTOCOL_VERSION:
+        raise ValueError(
+            "Selective V4 candidates must be frozen from the exact recorded tournament winner; "
+            "the legacy binary freeze route cannot be used"
+        )
     cost_version, fallback_spread = str(cost[0]), float(cost[1])
     lineage_id = str(lineage[0])
     development_raw = frame.loc[
@@ -487,6 +538,31 @@ def freeze_candidate(
                     """UPDATE app.research_lineages SET status='CANDIDATE_FROZEN'
                        WHERE research_lineage_id=%s AND status='RESERVED'""", (lineage_id,),
                 )
+                lifecycle_evidence = {
+                    "validation_policy_version": VALIDATION_POLICY_VERSION,
+                    "artifact_sha256": artifact_digest, "development_gates": validation_gates,
+                    "holdout_consumed": False, "execution_enabled": False,
+                }
+                insert_lifecycle_event(
+                    cursor, tenant_id=tenant_id, market_id=str(market_id),
+                    research_lineage_id=lineage_id, holdout_candidate_id=candidate_id,
+                    from_state="RESEARCH", to_state="ELIGIBLE_TO_FREEZE",
+                    reason="All predeclared development gates passed", evidence=lifecycle_evidence,
+                )
+                insert_lifecycle_event(
+                    cursor, tenant_id=tenant_id, market_id=str(market_id),
+                    research_lineage_id=lineage_id, holdout_candidate_id=candidate_id,
+                    from_state="ELIGIBLE_TO_FREEZE", to_state="FROZEN",
+                    reason="Artifact and development/holdout checksums frozen", evidence=lifecycle_evidence,
+                )
+            else:
+                insert_lifecycle_event(
+                    cursor, tenant_id=tenant_id, market_id=str(market_id),
+                    research_lineage_id=lineage_id, holdout_candidate_id=candidate_id,
+                    from_state="RESEARCH", to_state="REJECTED",
+                    reason="One or more development gates failed",
+                    evidence={"development_gates": validation_gates, "execution_enabled": False},
+                )
             connection.commit()
         except Exception:
             connection.rollback()
@@ -528,6 +604,14 @@ def evaluate_holdout(
         if cursor.rowcount != 1:
             connection.rollback()
             raise ValueError("Holdout was already claimed by another evaluation")
+        insert_lifecycle_event(
+            cursor, tenant_id=tenant_id, market_id=str(candidate["market_id"]),
+            research_lineage_id=str(candidate["research_lineage_id"]) if candidate.get("research_lineage_id") else None,
+            holdout_candidate_id=request.candidate_id, from_state="FROZEN", to_state="HOLDOUT_REVIEW",
+            reason="Explicit single-use holdout acknowledgement accepted",
+            evidence={"acknowledgement": request.acknowledgement, "holdout_consumed": True,
+                      "execution_enabled": False},
+        )
         connection.commit()
 
     try:
@@ -629,6 +713,15 @@ def evaluate_holdout(
                 ("COMPLETED" if passed else "REJECTED", json.dumps(outcome, default=_serial),
                  str(candidate["experiment_id"])),
             )
+            if not passed:
+                insert_lifecycle_event(
+                    cursor, tenant_id=tenant_id, market_id=str(candidate["market_id"]),
+                    research_lineage_id=str(candidate["research_lineage_id"]) if candidate.get("research_lineage_id") else None,
+                    holdout_candidate_id=request.candidate_id,
+                    from_state="HOLDOUT_REVIEW", to_state="REJECTED",
+                    reason="Untouched holdout gates rejected the frozen candidate",
+                    evidence={"evaluation": outcome, "execution_enabled": False},
+                )
             connection.commit()
         return {
             "status": "OWNER_REVIEW_REQUIRED" if passed else "HOLDOUT_REJECTED",
@@ -718,6 +811,27 @@ def approve_holdout_candidate(
                     "model_version_id": model_id, "artifact_sha256": candidate["artifact_sha256"],
                     "forward_shadow_only": True, "execution_enabled": False,
                 })),
+            )
+            approval_evidence = {
+                "model_version_id": model_id, "artifact_sha256": candidate["artifact_sha256"],
+                "owner_acknowledgement": request.acknowledgement,
+                "forward_shadow_only": True, "execution_enabled": False,
+            }
+            insert_lifecycle_event(
+                cursor, tenant_id=tenant_id, market_id=str(candidate["market_id"]),
+                research_lineage_id=str(candidate["research_lineage_id"]) if candidate.get("research_lineage_id") else None,
+                holdout_candidate_id=request.candidate_id, model_version_id=model_id,
+                changed_by_user_id=user_id, from_state="HOLDOUT_REVIEW", to_state="OWNER_APPROVED",
+                reason="Owner approved the exact checksum-bound holdout-passed artifact",
+                evidence=approval_evidence,
+            )
+            insert_lifecycle_event(
+                cursor, tenant_id=tenant_id, market_id=str(candidate["market_id"]),
+                research_lineage_id=str(candidate["research_lineage_id"]) if candidate.get("research_lineage_id") else None,
+                holdout_candidate_id=request.candidate_id, model_version_id=model_id,
+                changed_by_user_id=user_id, from_state="OWNER_APPROVED", to_state="FORWARD_SHADOW",
+                reason="Approved artifact admitted to isolated forward shadow only",
+                evidence=approval_evidence,
             )
             connection.commit()
         except Exception:

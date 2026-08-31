@@ -5,7 +5,12 @@ import pandas as pd
 import pytest
 
 from app.config import Settings
-from app.holdout_service import _effective_costs, evidence_gates, select_holdout_split
+from app.holdout_service import (
+    ReserveResearchLineageRequest,
+    _effective_costs,
+    evidence_gates,
+    select_holdout_split,
+)
 
 
 def _frame(rows: int) -> pd.DataFrame:
@@ -35,6 +40,17 @@ def test_holdout_split_fails_before_weakening_development_floor() -> None:
         )
 
 
+def test_lineage_reservation_requires_a_predeclared_market_target() -> None:
+    request = ReserveResearchLineageRequest(
+        market="GERMANY40",
+        hypothesis="Opening-session momentum persists after realistic transaction costs.",
+        target_mode="COST_AWARE_RETURN",
+        target_horizon_bars=4,
+    )
+    assert request.target_mode == "COST_AWARE_RETURN"
+    assert request.target_horizon_bars == 4
+
+
 def test_empirical_spread_fills_missing_cost_without_lowering_configured_floor() -> None:
     prepared = _effective_costs(_frame(3), fallback_spread=0.02, configured_bps=1.0)
     assert (prepared["effective_cost_bps"] >= 1.0).all()
@@ -54,4 +70,3 @@ def test_holdout_gate_requires_every_independent_evidence_class() -> None:
         settings, auc=0.55, metrics=metrics, calibration_error=0.1,
         feature_drift_score=0.5, regime_coverage=0.75, baseline_expectancy=0.0005,
     )["maximum_drawdown"]
-
