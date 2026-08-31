@@ -16,6 +16,12 @@ Older status statements are indexed in
   automatically created or consumed; those are owner research decisions.
 - Model approval remains `0/4`. Each market must independently pass its exact
   development tournament, untouched holdout and frozen forward-shadow policy.
+- The first Germany 40 V4 lineage was audited and then rejected without fitting
+  or consuming holdout data because only 1,827 target-eligible development rows
+  remained after causal/session filtering. Reservation now validates both the
+  2,000-row development floor and 500-row causal holdout floor before sealing a
+  lineage. Validated bounded Dukascopy recovery raised regular-session M15
+  inventory to 5,076 rows, but no chronological split yet satisfies both floors.
 - Drift snapshot writers and alerts are active. Until a model is approved they
   correctly record `MODEL_UNAVAILABLE`, not fabricated drift scores.
 - Point-in-time economic-event vintages are stored when scheduled events are
@@ -736,12 +742,17 @@ implementation-history archive.
 - The Research UI displays target and audit evidence and no longer exposes the
   misleading hard-coded Germany 40 freeze button.
 - Current leakage audits pass for all eight declared market/target combinations.
-  This proves dataset separation, not model profitability. No V4 lineage,
-  candidate, holdout evaluation, model promotion or broker order was created.
+  The first lineage-bound Germany 40 audit also passed all nine boundary gates.
+  Its tournament job then failed safely at the unchanged development evidence
+  floor, and the lineage was retained as `REJECTED`; holdout was not consumed.
+  No V4 candidate, holdout evaluation, model promotion or broker order was
+  created.
 
-Next evidence-dependent work is to reserve one explicit target-bound lineage per
-market, run the durable selective tournaments and freeze only a leader that
-passes every development gate. Event regimes and sustained forward-shadow
-evidence remain blocked until their prerequisite evidence exists. Drift writers
-are active, but real drift scores necessarily require an approved model and
+Next evidence-dependent work is to accumulate or import enough validated Germany
+40 regular-session evidence for one chronological split to contain at least
+2,000 target-eligible development rows and 500 causal holdout rows. A new lineage
+may then be reserved and the durable tournament rerun. Other markets continue
+streaming independently. Event regimes and sustained forward-shadow evidence
+remain blocked until their prerequisite evidence exists. Drift writers are
+active, but real drift scores necessarily require an approved model and
 post-approval observations.
