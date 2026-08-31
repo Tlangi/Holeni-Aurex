@@ -146,7 +146,9 @@ def read_risk_status(settings: Settings, tenant_id: str) -> dict[str, object]:
                       l.realized_pnl_zar,l.unrealized_pnl_zar,l.reserved_risk_zar,
                       l.daily_drawdown_pct,l.consecutive_losses,l.peak_equity_zar,
                       l.intraday_drawdown_pct,l.daily_return_pct,l.peak_daily_return_pct,
-                      l.profit_protection_state,l.status,l.status_reason,
+                      l.profit_protection_state,l.source_currency,l.risk_return_basis,
+                      l.opening_equity_source,l.current_equity_source,l.peak_equity_source,
+                      l.status,l.status_reason,
                       l.last_reconciled_at_utc
                FROM app.risk_versions rv
                LEFT JOIN app.trading_accounts ta ON ta.tenant_id=rv.tenant_id
@@ -173,6 +175,11 @@ def read_risk_status(settings: Settings, tenant_id: str) -> dict[str, object]:
             "daily_return_pct": str(row["daily_return_pct"]),
             "peak_daily_return_pct": str(row["peak_daily_return_pct"]),
             "profit_protection_state": str(row["profit_protection_state"]),
+            "source_currency": str(row["source_currency"]) if row["source_currency"] else None,
+            "risk_return_basis": str(row["risk_return_basis"]),
+            "opening_equity_source": str(row["opening_equity_source"]) if row["opening_equity_source"] is not None else None,
+            "current_equity_source": str(row["current_equity_source"]) if row["current_equity_source"] is not None else None,
+            "peak_equity_source": str(row["peak_equity_source"]) if row["peak_equity_source"] is not None else None,
             "consecutive_losses": int(row["consecutive_losses"]),
             "status": str(row["status"]),
             "reason": row["status_reason"],
@@ -187,7 +194,7 @@ def read_risk_status(settings: Settings, tenant_id: str) -> dict[str, object]:
             "max_open_positions": int(row["max_open_positions"]),
             "max_positions_per_market": int(row["max_positions_per_market"]),
             "max_consecutive_losses": int(row["max_consecutive_losses"]),
-            "preferred_daily_return_pct": str(row["preferred_daily_return_pct"]),
+            "preferred_daily_return_pct": None,
             "profit_protection_pct": str(row["profit_protection_pct"]),
             "daily_profit_lock_pct": str(row["daily_profit_lock_pct"]),
             "max_portfolio_risk_pct": str(row["max_portfolio_risk_pct"]),
@@ -195,7 +202,7 @@ def read_risk_status(settings: Settings, tenant_id: str) -> dict[str, object]:
             "profit_giveback_limit_pct": str(row["profit_giveback_limit_pct"]),
             "max_trades_per_day": int(row["max_trades_per_day"]),
             "min_reward_risk_ratio": str(row["min_reward_risk_ratio"]),
-            "profit_objective_authority": "INFORMATIONAL_ONLY",
+            "profit_objective_authority": "NONE_NO_FORCED_TRADING",
         },
         "ledger": ledger,
     }

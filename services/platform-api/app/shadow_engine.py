@@ -48,7 +48,7 @@ class RiskInput:
     value_per_price_point_zar: Decimal | None
     consecutive_losses: int = 0
     profit_protection_state: str = "NORMAL"
-    preferred_daily_return_pct: Decimal = Decimal("2.0")
+    preferred_daily_return_pct: Decimal = Decimal("0")
     ledger_status: str = "CURRENT"
     reserved_risk_zar: Decimal = Decimal("0")
     max_portfolio_risk_pct: Decimal = Decimal("0.75")
@@ -86,7 +86,7 @@ def evaluate_risk(item: RiskInput) -> RiskResult:
         drawdown = (item.start_day_equity_zar - item.equity_zar) / item.start_day_equity_zar * 100
         if drawdown >= item.daily_loss_limit_pct:
             return RiskResult(False, "DAILY_LOSS_LIMIT")
-    if item.profit_protection_state == "DAILY_TARGET_LOCKED":
+    if item.profit_protection_state in {"DAILY_GAIN_LOCKED", "DAILY_TARGET_LOCKED"}:
         return RiskResult(False, "DAILY_PROFIT_LOCK")
     if item.consecutive_losses >= 4:
         return RiskResult(False, "CONSECUTIVE_LOSS_LIMIT")

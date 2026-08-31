@@ -278,3 +278,14 @@ Encrypted off-server backups require three separately verified steps:
 `app.data_retention_policies` define hot/archive periods, but archive-required
 records must never be deleted until an encrypted archive checksum and restore
 test exist. Destructive retention execution remains an explicit later operation.
+
+## Profit-protection interpretation
+
+Aurex has no daily profit quota. `preferred_daily_return_pct` is retained only
+as a legacy database column and is exposed as no objective. Model signals must
+remain cost-aware and may produce HOLD for an entire day. The daily risk ledger
+uses native IG account equity for return, peak and drawdown decisions; converted
+ZAR values remain available for owner reporting. Once the configured gain
+activation threshold is reached, risk is reduced for the rest of that South
+African trading day. Excessive giveback, daily loss, peak drawdown, consecutive
+losses and reconciliation failures block new entries.

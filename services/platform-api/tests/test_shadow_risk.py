@@ -2,6 +2,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 from app.shadow_engine import RiskInput, evaluate_risk
+from app.risk_ledger import risk_return_percentages
 
 
 def valid_input() -> RiskInput:
@@ -63,7 +64,7 @@ def test_losses_can_only_reduce_or_block_new_trade_risk() -> None:
 def test_profit_protection_reduces_risk_and_daily_lock_blocks_entries() -> None:
     normal = evaluate_risk(valid_input())
     protected = evaluate_risk(replace(valid_input(), profit_protection_state="PROFIT_PROTECTION"))
-    locked = evaluate_risk(replace(valid_input(), profit_protection_state="DAILY_TARGET_LOCKED"))
+    locked = evaluate_risk(replace(valid_input(), profit_protection_state="DAILY_GAIN_LOCKED"))
     assert protected.planned_risk_zar < normal.planned_risk_zar
     assert locked.reason == "DAILY_PROFIT_LOCK"
 
@@ -83,3 +84,16 @@ def test_configured_reward_risk_ratio_drives_target() -> None:
     assert (result.take_profit - item.current_price) == (
         item.current_price - result.stop
     ) * Decimal("1.5")
+
+
+def test_profit_protection_percentages_are_currency_conversion_invariant() -> None:
+    source = risk_return_percentages(
+        Decimal("10000"), Decimal("10100"), Decimal("10200"),
+    )
+    same_values_reported_in_zar = risk_return_percentages(
+        Decimal("180000"), Decimal("181800"), Decimal("183600"),
+    )
+    assert source == same_values_reported_in_zar
+    assert source[1] == Decimal("1.00")
+    assert source[2] == Decimal("2.00")
+    assert source[3] > 0

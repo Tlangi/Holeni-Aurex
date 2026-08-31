@@ -187,14 +187,17 @@ export interface OrderIntentsData {
 export interface RiskStatusData {
   status: string; reason: string | null;
   policy: null | { risk_per_trade_pct: string; daily_loss_limit_pct: string; max_open_positions: number;
-    max_positions_per_market: number; max_consecutive_losses: number; preferred_daily_return_pct: string;
+    max_positions_per_market: number; max_consecutive_losses: number; preferred_daily_return_pct: null;
     profit_protection_pct: string; daily_profit_lock_pct: string; max_portfolio_risk_pct: string;
     max_intraday_drawdown_pct: string; profit_giveback_limit_pct: string; max_trades_per_day: number;
-    min_reward_risk_ratio: string; profit_objective_authority: 'INFORMATIONAL_ONLY' };
+    min_reward_risk_ratio: string; profit_objective_authority: 'NONE_NO_FORCED_TRADING' };
   ledger: null | { date_sast: string; opening_equity_zar: string; current_equity_zar: string;
     realized_pnl_zar: string; unrealized_pnl_zar: string; reserved_risk_zar: string;
     daily_drawdown_pct: string; peak_equity_zar: string; intraday_drawdown_pct: string;
     daily_return_pct: string; peak_daily_return_pct: string; profit_protection_state: string;
+    source_currency: string | null; risk_return_basis: string;
+    opening_equity_source: string | null; current_equity_source: string | null;
+    peak_equity_source: string | null;
     consecutive_losses: number; status: string; reason: string | null;
     last_reconciled_at_utc: string };
 }

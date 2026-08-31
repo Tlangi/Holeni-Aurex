@@ -30,6 +30,10 @@ Older status statements are indexed in
 - Least-privilege SQL, encrypted off-server backup and retention operations are
   supplied as guarded administrator procedures. They are not considered active
   until separately configured, tested and evidenced on this server.
+- Migration 031 removes the informational 2% daily objective, starts configurable
+  profit protection at 0.5%, and calculates risk returns in the IG account's
+  native currency. ZAR remains reporting-only, so exchange-rate movement cannot
+  activate a trading-risk control.
 
 ### Current implementation order
 

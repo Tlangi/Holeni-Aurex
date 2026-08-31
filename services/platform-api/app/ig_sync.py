@@ -385,8 +385,10 @@ def _store_snapshot(
             (tenant_id, trading_account_id, equity, balance, available_funds,
              margin_used, profit_loss, source_currency, reporting_currency,
              conversion_rate, conversion_source, conversion_observed_at_utc,
-             observed_at_utc, snapshot_fingerprint)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ZAR', %s, %s, %s, %s, %s);
+             observed_at_utc, snapshot_fingerprint,source_equity,source_balance,
+             source_available_funds,source_margin_used,source_profit_loss)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ZAR', %s, %s, %s, %s, %s,
+                %s,%s,%s,%s,%s);
         """,
         (
             tenant_id,
@@ -402,6 +404,11 @@ def _store_snapshot(
             rate.observed_at_utc,
             observed_at,
             fingerprint,
+            account.equity,
+            account.balance,
+            account.available,
+            account.margin_used,
+            account.profit_loss,
         ),
     )
     return True

@@ -476,9 +476,9 @@
             <div><span>Reserved risk</span><strong>{{ money(riskStatus()?.ledger?.reserved_risk_zar) }}</strong></div>
             <div><span>Maximum positions</span><strong>{{ riskStatus()?.policy?.max_open_positions ?? '—' }}</strong></div>
             <div><span>Consecutive losses</span><strong>{{ riskStatus()?.ledger?.consecutive_losses ?? 0 }}</strong></div>
-            <div><span>Daily return</span><strong>{{ riskStatus()?.ledger?.daily_return_pct ?? '—' }}%</strong></div>
+            <div><span>Daily account return</span><strong>{{ riskStatus()?.ledger?.daily_return_pct ?? '—' }}% <small>{{ riskStatus()?.ledger?.source_currency ?? '' }}</small></strong></div>
             <div><span>Profit protection</span><strong>{{ riskStatus()?.ledger?.profit_protection_state ?? '—' }}</strong></div>
-            <div><span>Preferred objective</span><strong>{{ riskStatus()?.policy?.preferred_daily_return_pct ?? '—' }}% <small>informational only</small></strong></div>
+            <div><span>Daily profit target</span><strong>None <small>quality signals only</small></strong></div>
           </div>
         </article>
         <article class="panel status-panel" id="reconciliation">
