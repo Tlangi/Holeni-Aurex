@@ -18,11 +18,11 @@ if __name__ == "__main__":
     parser.add_argument("--max-pages-per-market", type=int, default=1, choices=range(1, 11))
     parser.add_argument(
         "--market", action="append",
-        choices=("EURUSD", "GBPUSD", "USDJPY", "GERMANY40"),
+        choices=("EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR"),
     )
     args = parser.parse_args()
     result = backfill_historical_m5(
-        get_settings(), symbols=tuple(args.market or ("EURUSD", "GBPUSD", "USDJPY")),
+        get_settings(), symbols=tuple(args.market) if args.market else None,
         page_size=args.page_size, max_pages_per_market=args.max_pages_per_market,
     )
     print(json.dumps(result, indent=2, default=str))

@@ -36,6 +36,22 @@ class ExecutionGate:
 
 
 @dataclass(frozen=True)
+class ExperimentalExecutionGate:
+    feature_enabled: bool
+    orchestrator_decision: str
+    account_id: str
+    environment: str
+    live_trading_enabled: bool
+
+
+@dataclass(frozen=True)
+class ExperimentalCloseGate:
+    account_id: str
+    environment: str
+    live_trading_enabled: bool
+
+
+@dataclass(frozen=True)
 class OrderSubmission:
     epic: str
     direction: str
@@ -79,6 +95,30 @@ def assert_execution_gate(settings: Settings, gate: ExecutionGate) -> None:
         raise IGExecutionBlocked("Only a newly risk-approved intent may be submitted")
 
 
+def assert_experimental_execution_gate(settings: Settings, gate: ExperimentalExecutionGate) -> None:
+    """Final narrow transport lock; the isolated orchestrator owns all other gates."""
+    if not settings.experimental_demo_configured or not gate.feature_enabled:
+        raise IGExecutionBlocked("EXPERIMENTAL_DEMO_FEATURE_DISABLED")
+    if settings.allow_live_trading or gate.live_trading_enabled:
+        raise IGExecutionBlocked("EXPERIMENTAL_DEMO_ENVIRONMENT_LOCK_FAILED")
+    if settings.ig_environment != "demo" or settings.broker_environment != "demo" \
+            or gate.environment.lower() != "demo":
+        raise IGExecutionBlocked("EXPERIMENTAL_DEMO_ENVIRONMENT_LOCK_FAILED")
+    if gate.account_id != settings.ig_account_id:
+        raise IGExecutionBlocked("EXPERIMENTAL_DEMO_ENVIRONMENT_LOCK_FAILED")
+    if gate.orchestrator_decision != "ELIGIBLE":
+        raise IGExecutionBlocked("Experimental orchestrator did not approve this attempt")
+
+
+def assert_experimental_close_gate(settings: Settings, gate: ExperimentalCloseGate) -> None:
+    """Allow safe position management even after entry opt-in is disabled or expired."""
+    if settings.allow_live_trading or gate.live_trading_enabled:
+        raise IGExecutionBlocked("EXPERIMENTAL_DEMO_ENVIRONMENT_LOCK_FAILED")
+    if settings.ig_environment != "demo" or settings.broker_environment != "demo" \
+            or gate.environment.lower() != "demo" or gate.account_id != settings.ig_account_id:
+        raise IGExecutionBlocked("EXPERIMENTAL_DEMO_ENVIRONMENT_LOCK_FAILED")
+
+
 def validate_order_submission(item: OrderSubmission) -> None:
     if item.direction not in {"BUY", "SELL"}:
         raise ValueError("Invalid direction")
@@ -106,6 +146,15 @@ class IGDemoExecutionAdapter:
 
     def submit(self, submission: OrderSubmission, gate: ExecutionGate) -> DealAcknowledgement:
         assert_execution_gate(self.settings, gate)
+        return self._submit_once(submission)
+
+    def submit_experimental(
+        self, submission: OrderSubmission, gate: ExperimentalExecutionGate,
+    ) -> DealAcknowledgement:
+        assert_experimental_execution_gate(self.settings, gate)
+        return self._submit_once(submission)
+
+    def _submit_once(self, submission: OrderSubmission) -> DealAcknowledgement:
         validate_order_submission(submission)
         try:
             response = self.client.session.post(
@@ -137,6 +186,31 @@ class IGDemoExecutionAdapter:
         reference = str(payload.get("dealReference") or "")
         if not reference:
             raise IGSubmissionUnknown("IG Demo acknowledgement omitted dealReference")
+        return DealAcknowledgement(reference)
+
+    def close_experimental(
+        self, *, deal_id: str, direction: str, size: Decimal, epic: str,
+        expiry: str, gate: ExperimentalCloseGate,
+    ) -> DealAcknowledgement:
+        assert_experimental_close_gate(self.settings, gate)
+        if not deal_id or direction not in {"BUY", "SELL"} or size <= 0:
+            raise ValueError("Invalid experimental close request")
+        try:
+            response = self.client.session.post(
+                f"{self.client.base_url}/positions/otc",
+                headers={"Version": "1", "Content-Type": "application/json", "_method": "DELETE"},
+                json={"dealId": deal_id, "direction": direction, "epic": epic,
+                      "expiry": expiry, "orderType": "MARKET", "size": float(size),
+                      "timeInForce": "FILL_OR_KILL"}, timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise IGSubmissionUnknown("IG Demo close outcome is unknown; reconcile before retry") from exc
+        payload = self._payload(response)
+        if response.status_code not in {200, 201}:
+            raise IGExecutionRejected(str(payload.get("errorCode") or f"HTTP_{response.status_code}"))
+        reference = str(payload.get("dealReference") or "")
+        if not reference:
+            raise IGSubmissionUnknown("IG Demo close acknowledgement omitted dealReference")
         return DealAcknowledgement(reference)
 
     def confirm(self, deal_reference: str, *, attempts: int = 10) -> DealConfirmation:

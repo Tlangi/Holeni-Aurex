@@ -19,7 +19,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--market", default="USDJPY",
-        choices=("ALL", "EURUSD", "GBPUSD", "USDJPY", "GERMANY40"),
+        choices=("ALL", "EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR"),
     )
     parser.add_argument("--notes", default="Audited challenger comparison; no holdout or execution")
     parser.add_argument("--full", action="store_true", help="Print complete candidate evidence")
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     if not tenant:
         raise SystemExit("No tenant exists")
     markets = (
-        ("EURUSD", "GBPUSD", "USDJPY", "GERMANY40")
+        ("EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR")
         if arguments.market == "ALL" else (arguments.market,)
     )
     results = {}

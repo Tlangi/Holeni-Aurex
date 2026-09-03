@@ -16,7 +16,7 @@ from app.replay_engine import ReplayRequest, run_replay  # noqa: E402
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Offline deterministic Aurex replay")
-    parser.add_argument("--market", required=True, choices=("EURUSD", "GBPUSD", "USDJPY", "GERMANY40"))
+    parser.add_argument("--market", required=True, choices=("EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR"))
     parser.add_argument("--mode", default="VALIDATED_MODEL", choices=("VALIDATED_MODEL", "TECHNICAL_DIAGNOSTIC"))
     parser.add_argument("--max-candles", type=int, default=2000)
     parser.add_argument("--initial-equity-zar", type=Decimal, default=Decimal("100000"))

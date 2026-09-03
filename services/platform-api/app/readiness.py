@@ -76,7 +76,8 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
                       MAX(CASE WHEN c.timeframe='M5' AND c.completed=1 THEN c.open_time_utc END) latest_m5,
                       MAX(CASE WHEN c.timeframe='M15' AND c.completed=1 THEN c.open_time_utc END) latest_m15
                FROM app.markets m LEFT JOIN app.candles c ON c.market_id=m.market_id
-               WHERE m.enabled=1 GROUP BY m.symbol,m.calendar_code,m.market_timezone,
+               WHERE m.enabled=1 AND m.signal_enabled=1
+               GROUP BY m.symbol,m.calendar_code,m.market_timezone,
                          m.session_open_local,m.session_close_local"""
         )
         markets = cursor.fetchall()
@@ -119,7 +120,7 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
         cursor.execute(
             """SELECT COUNT(*) rule_count FROM app.broker_market_rules r
                JOIN app.markets m ON m.market_id=r.market_id
-               WHERE m.enabled=1 AND r.value_per_price_point_zar IS NOT NULL
+               WHERE m.enabled=1 AND m.signal_enabled=1 AND r.value_per_price_point_zar IS NOT NULL
                  AND r.margin_factor_pct IS NOT NULL AND r.margin_factor_pct>0
                  AND r.deal_currency IS NOT NULL AND r.force_open_allowed=1
                  AND r.market_order_preference IN ('AVAILABLE_DEFAULT_OFF','AVAILABLE_DEFAULT_ON')

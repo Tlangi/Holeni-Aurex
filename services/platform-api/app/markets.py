@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
@@ -18,11 +19,14 @@ def read_market_inventory(settings: Settings, tenant_id: str) -> dict[str, objec
             raise PermissionError("Tenant has no trading account")
         cursor.execute(
             """SELECT symbol,display_name,asset_class,ig_epic,base_currency,
-                      quote_currency,price_digits,calendar_code,market_timezone
-               FROM app.markets WHERE enabled=1 ORDER BY
-                 CASE symbol WHEN 'EURUSD' THEN 1 WHEN 'GBPUSD' THEN 2
-                             WHEN 'USDJPY' THEN 3 WHEN 'GERMANY40' THEN 4 ELSE 99 END,
-                 symbol"""
+                      quote_currency,price_digits,calendar_code,market_timezone,
+                      market_tier,research_enabled,training_enabled,signal_enabled,
+                      demo_trading_enabled,live_trading_enabled,reporting_currency,
+                      pip_size,tick_size,max_spread_bps,slippage_assumption_bps,
+                      default_timeframe,confirmation_timeframe,risk_profile,
+                      execution_promotion_required,broker_instrument_type,
+                      broker_resolved_at_utc
+               FROM app.markets WHERE enabled=1 ORDER BY market_tier,symbol"""
         )
         markets = cursor.fetchall()
     return {
@@ -37,10 +41,33 @@ def read_market_inventory(settings: Settings, tenant_id: str) -> dict[str, objec
                 "price_digits": int(item["price_digits"]),
                 "calendar_code": str(item["calendar_code"]),
                 "market_timezone": str(item["market_timezone"]),
+                "tier": int(item["market_tier"]),
+                "research_enabled": bool(item["research_enabled"]),
+                "training_enabled": bool(item["training_enabled"]),
+                "signal_enabled": bool(item["signal_enabled"]),
+                "demo_trading_enabled": bool(item["demo_trading_enabled"]),
+                "live_trading_enabled": bool(item["live_trading_enabled"]),
+                "reporting_currency": str(item["reporting_currency"]),
+                "pip_size": str(item["pip_size"]) if item["pip_size"] is not None else None,
+                "tick_size": str(item["tick_size"]) if item["tick_size"] is not None else None,
+                "max_spread_bps": str(item["max_spread_bps"]) if item["max_spread_bps"] is not None else None,
+                "slippage_assumption_bps": str(item["slippage_assumption_bps"])
+                if item["slippage_assumption_bps"] is not None else None,
+                "default_timeframe": str(item["default_timeframe"]),
+                "confirmation_timeframe": str(item["confirmation_timeframe"]),
+                "risk_profile": str(item["risk_profile"]),
+                "execution_promotion_required": bool(item["execution_promotion_required"]),
+                "broker_instrument_type": str(item["broker_instrument_type"] or "UNKNOWN"),
+                "broker_resolved_at_utc": item["broker_resolved_at_utc"].replace(
+                    tzinfo=timezone.utc,
+                ).isoformat() if item["broker_resolved_at_utc"] else None,
+                "eligibility": "RESEARCH_ONLY" if int(item["market_tier"]) == 3
+                else "VALIDATING" if not bool(item["demo_trading_enabled"])
+                else "DEMO_GATED",
             }
             for item in markets
         ],
-        "timeframes": ["M5", "M15"],
+        "timeframes": ["M5", "M15", "M30", "H1", "H4", "D1"],
         "periods": ["TODAY", "7D", "ALL"],
         "execution_enabled": False,
     }
@@ -53,9 +80,7 @@ def read_candles(
     symbol = symbol.upper()
     timeframe = timeframe.upper()
     period = period.upper()
-    if symbol not in {"EURUSD", "GBPUSD", "USDJPY", "GERMANY40"}:
-        raise ValueError("Unsupported market")
-    if timeframe not in {"M5", "M15"}:
+    if timeframe not in {"M5", "M15", "M30", "H1", "H4", "D1"}:
         raise ValueError("Unsupported timeframe")
     if period not in {"TODAY", "7D", "ALL"}:
         raise ValueError("Unsupported candle period")
@@ -76,16 +101,31 @@ def read_candles(
         if not cursor.fetchone():
             raise PermissionError("Tenant has no trading account")
         cursor.execute(
+            "SELECT 1 AS supported FROM app.markets WHERE symbol=%s AND enabled=1 AND research_enabled=1",
+            (symbol,),
+        )
+        if not cursor.fetchone():
+            raise ValueError("Unsupported market")
+        source_timeframe = timeframe if timeframe in {"M5", "M15"} else "M15"
+        multiplier = {"M30": 2, "H1": 4, "H4": 16, "D1": 96}.get(timeframe, 1)
+        source_limit = min(10000, limit * multiplier + multiplier)
+        cursor.execute(
             """SELECT TOP (%s) symbol,timeframe,open_time_utc,open_time_sast,
                       [open],high,low,[close],bid_close,ask_close,spread_close,
                       is_regular_session,tick_count,source
-               FROM app.v_market_candles
+               FROM app.v_market_candles AS v
                WHERE symbol=%s AND timeframe=%s AND completed=1
+                 AND EXISTS (SELECT 1 FROM app.candles AS quality
+                             WHERE quality.candle_id=v.candle_id AND quality.quality_status='PASS')
                  AND (%s='ALL' OR (open_time_utc >= %s AND open_time_utc <= %s))
                ORDER BY open_time_utc DESC""",
-            (limit, symbol, timeframe, period, start_utc, end_utc),
+            (source_limit, symbol, source_timeframe, period, start_utc, end_utc),
         )
         rows = list(reversed(cursor.fetchall()))
+    if timeframe not in {"M5", "M15"}:
+        rows = _aggregate_rows(rows, timeframe)[-limit:]
+    else:
+        rows = rows[-limit:]
     return {
         "symbol": symbol,
         "timeframe": timeframe,
@@ -110,3 +150,36 @@ def read_candles(
             for row in rows
         ],
     }
+
+
+def _aggregate_rows(rows: list[dict[str, object]], timeframe: str) -> list[dict[str, object]]:
+    def bucket(value: datetime) -> datetime:
+        opened = value.replace(tzinfo=timezone.utc)
+        if timeframe == "M30":
+            return opened.replace(minute=(opened.minute // 30) * 30, second=0, microsecond=0)
+        if timeframe == "H1":
+            return opened.replace(minute=0, second=0, microsecond=0)
+        if timeframe == "H4":
+            return opened.replace(hour=(opened.hour // 4) * 4, minute=0, second=0, microsecond=0)
+        return opened.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    grouped: dict[datetime, list[dict[str, object]]] = {}
+    for row in rows:
+        grouped.setdefault(bucket(row["open_time_utc"]), []).append(row)
+    sast = ZoneInfo("Africa/Johannesburg")
+    results: list[dict[str, object]] = []
+    for opened, candles in sorted(grouped.items()):
+        first, last = candles[0], candles[-1]
+        results.append({
+            "symbol": first["symbol"], "timeframe": timeframe,
+            "open_time_utc": opened.replace(tzinfo=None),
+            "open_time_sast": opened.astimezone(sast).replace(tzinfo=None),
+            "open": first["open"], "high": max(Decimal(str(item["high"])) for item in candles),
+            "low": min(Decimal(str(item["low"])) for item in candles), "close": last["close"],
+            "bid_close": last["bid_close"], "ask_close": last["ask_close"],
+            "spread_close": last["spread_close"],
+            "is_regular_session": all(bool(item["is_regular_session"]) for item in candles),
+            "tick_count": sum(int(item["tick_count"] or 0) for item in candles),
+            "source": f"AGGREGATED_{timeframe}",
+        })
+    return results

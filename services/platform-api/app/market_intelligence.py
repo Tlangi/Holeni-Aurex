@@ -87,15 +87,30 @@ def _persist_m5(settings: Settings, market_id: str, prices: list[dict[str, objec
     return {"accepted": accepted, "rejected": rejected}
 
 
-def aggregate_m15_history(settings: Settings, market_id: str) -> int:
+def aggregate_m15_history(
+    settings: Settings, market_id: str, *, start_utc: datetime | None = None,
+    end_utc: datetime | None = None,
+) -> int:
     inserted = 0
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
-        cursor.execute(
-            """SELECT open_time_utc,[open],high,low,[close],tick_count
-               FROM app.candles WHERE market_id=%s AND timeframe='M5' AND completed=1
-                 AND quality_status='PASS' ORDER BY open_time_utc""", (market_id,),
-        )
+        if start_utc is None or end_utc is None:
+            cursor.execute(
+                """SELECT open_time_utc,[open],high,low,[close],tick_count
+                   FROM app.candles WHERE market_id=%s AND timeframe='M5' AND completed=1
+                     AND quality_status='PASS' ORDER BY open_time_utc""", (market_id,),
+            )
+        else:
+            bucket_start = start_utc.replace(minute=(start_utc.minute // 15) * 15,
+                                             second=0, microsecond=0)
+            bucket_end = end_utc.replace(minute=(end_utc.minute // 15) * 15,
+                                         second=0, microsecond=0) + timedelta(minutes=10)
+            cursor.execute(
+                """SELECT open_time_utc,[open],high,low,[close],tick_count
+                   FROM app.candles WHERE market_id=%s AND timeframe='M5' AND completed=1
+                     AND quality_status='PASS' AND open_time_utc BETWEEN %s AND %s
+                   ORDER BY open_time_utc""", (market_id, bucket_start, bucket_end),
+            )
         buckets: dict[datetime, list[dict[str, object]]] = {}
         for row in cursor.fetchall():
             opened = row["open_time_utc"]
@@ -253,13 +268,20 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
 
 
 def backfill_historical_m5(
-    settings: Settings, *, symbols: tuple[str, ...] = ("EURUSD", "GBPUSD", "USDJPY"),
+    settings: Settings, *, symbols: tuple[str, ...] | None = None,
     page_size: int = 500, max_pages_per_market: int = 1,
 ) -> dict[str, object]:
     """Quota-bounded, resumable backfill. A run can never exceed its declared page budget."""
     if max_pages_per_market < 1 or max_pages_per_market > 10:
         raise ValueError("max_pages_per_market must be between 1 and 10")
     outcomes: dict[str, object] = {}
+    if symbols is None:
+        with open_database(settings) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT symbol FROM app.markets WHERE enabled=1 AND research_enabled=1 ORDER BY market_tier,symbol"
+            )
+            symbols = tuple(str(row[0]) for row in cursor.fetchall())
     with IGDemoClient(settings) as client:
         for symbol in symbols:
             with open_database(settings) as connection:
@@ -270,25 +292,101 @@ def backfill_historical_m5(
                 outcomes[symbol] = {"status": "UNKNOWN_MARKET"}
                 continue
             totals = {"accepted": 0, "rejected": 0}
+            with open_database(settings) as connection:
+                cursor = connection.cursor(as_dict=True)
+                cursor.execute(
+                    """SELECT last_page_requested,boundary_status FROM app.provider_history_boundaries
+                       WHERE market_id=%s AND provider_code='IG_DEMO' AND timeframe='M5'""",
+                    (str(market["market_id"]),),
+                )
+                watermark = cursor.fetchone() or {}
+            start_page = int(watermark.get("last_page_requested") or 0) + 1
+            if watermark.get("boundary_status") in {"OBSERVED", "PROVIDER_LIMIT"}:
+                outcomes[symbol] = {"status": "BOUNDARY_ALREADY_RECORDED", "requested_pages": 0}
+                continue
+            earliest_returned = latest_returned = None
+            last_page = start_page - 1
+            total_pages = None
             try:
-                for page in range(1, max_pages_per_market + 1):
+                for page in range(start_page, start_page + max_pages_per_market):
                     prices, total_pages = client.historical_prices_page(
                         str(market["ig_epic"]), page_size=page_size, page_number=page,
                     )
+                    timestamps = [_timestamp(item.get("snapshotTimeUTC") or item.get("snapshotTime"))
+                                  for item in prices]
+                    if timestamps:
+                        page_earliest, page_latest = min(timestamps), max(timestamps)
+                        earliest_returned = min(earliest_returned, page_earliest) if earliest_returned else page_earliest
+                        latest_returned = max(latest_returned, page_latest) if latest_returned else page_latest
                     persisted = _persist_m5(settings, str(market["market_id"]), prices)
                     totals = {name: totals[name] + persisted[name] for name in totals}
+                    last_page = page
                     if page >= total_pages:
                         break
-                aggregated = aggregate_m15_history(settings, str(market["market_id"]))
+                aggregated = aggregate_m15_history(
+                    settings, str(market["market_id"]), start_utc=earliest_returned,
+                    end_utc=latest_returned,
+                ) if earliest_returned and latest_returned else 0
                 quality = validate_market_data(settings, str(market["market_id"]), "M5")
                 validate_market_data(settings, str(market["market_id"]), "M15")
-                outcomes[symbol] = {"status": "COMPLETED", **totals, "m15_aggregated": aggregated,
+                short_single_page = total_pages == 1 and totals["accepted"] < page_size
+                boundary_status = ("PROVIDER_LIMIT" if short_single_page else
+                                   "OBSERVED" if total_pages is not None and last_page >= total_pages
+                                   else "PARTIAL")
+                limit_reason = "IG_V3_RETURNED_SHORT_SINGLE_PAGE" if short_single_page else None
+                with open_database(settings) as connection:
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        """MERGE app.provider_history_boundaries AS target
+                           USING(SELECT %s market_id,'IG_DEMO' provider_code,'M5' timeframe) source
+                           ON target.market_id=source.market_id AND target.provider_code=source.provider_code
+                              AND target.timeframe=source.timeframe
+                           WHEN MATCHED THEN UPDATE SET
+                             earliest_available_utc=CASE WHEN %s IS NULL THEN target.earliest_available_utc
+                               WHEN target.earliest_available_utc IS NULL OR %s<target.earliest_available_utc THEN %s
+                               ELSE target.earliest_available_utc END,
+                             latest_available_utc=CASE WHEN %s IS NULL THEN target.latest_available_utc
+                               WHEN target.latest_available_utc IS NULL OR %s>target.latest_available_utc THEN %s
+                               ELSE target.latest_available_utc END,
+                             last_page_requested=%s,last_page_size=%s,boundary_status=%s,
+                             provider_limit_reason=%s,observed_at_utc=SYSUTCDATETIME()
+                           WHEN NOT MATCHED THEN INSERT(provider_history_boundary_id,market_id,
+                             provider_code,timeframe,earliest_available_utc,latest_available_utc,
+                             last_page_requested,last_page_size,boundary_status,provider_limit_reason,
+                             observed_at_utc)
+                           VALUES(NEWID(),source.market_id,source.provider_code,source.timeframe,
+                             %s,%s,%s,%s,%s,%s,SYSUTCDATETIME());""",
+                        (str(market["market_id"]), earliest_returned, earliest_returned, earliest_returned,
+                         latest_returned, latest_returned, latest_returned, last_page, page_size,
+                         boundary_status, limit_reason, earliest_returned, latest_returned, last_page,
+                         page_size, boundary_status, limit_reason),
+                    )
+                    connection.commit()
+                outcomes[symbol] = {"status": boundary_status, **totals, "m15_aggregated": aggregated,
+                                    "first_page": start_page, "last_page": last_page,
+                                    "provider_total_pages": total_pages,
                                     "quality": quality["status"]}
             except IGDemoUnavailable as exc:
-                outcomes[symbol] = {"status": "QUOTA_BLOCKED" if exc.error_code ==
-                                    "error.public-api.exceeded-account-historical-data-allowance" else "FAILED",
+                quota = exc.error_code == "error.public-api.exceeded-account-historical-data-allowance"
+                outcomes[symbol] = {"status": "QUOTA_DEFERRED" if quota else "FAILED",
                                     "error_code": exc.error_code}
-                if outcomes[symbol]["status"] == "QUOTA_BLOCKED":
+                with open_database(settings) as connection:
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        """MERGE app.provider_history_boundaries AS target
+                           USING(SELECT %s market_id,'IG_DEMO' provider_code,'M5' timeframe) source
+                           ON target.market_id=source.market_id AND target.provider_code=source.provider_code
+                              AND target.timeframe=source.timeframe
+                           WHEN MATCHED THEN UPDATE SET boundary_status=%s,provider_limit_reason=%s,
+                             observed_at_utc=SYSUTCDATETIME()
+                           WHEN NOT MATCHED THEN INSERT(provider_history_boundary_id,market_id,
+                             provider_code,timeframe,boundary_status,provider_limit_reason,observed_at_utc)
+                           VALUES(NEWID(),source.market_id,source.provider_code,source.timeframe,%s,%s,SYSUTCDATETIME());""",
+                        (str(market["market_id"]), "QUOTA_DEFERRED" if quota else "UNAVAILABLE",
+                         exc.error_code, "QUOTA_DEFERRED" if quota else "UNAVAILABLE", exc.error_code),
+                    )
+                    connection.commit()
+                if quota:
                     break
     return outcomes
 
@@ -311,6 +409,9 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
         cursor.execute(
             """SELECT m.market_id,m.symbol,m.display_name,m.calendar_code,m.market_timezone,
                       m.session_open_local,m.session_close_local,
+                      m.market_tier,m.asset_class,m.research_enabled,m.training_enabled,
+                      m.signal_enabled,m.demo_trading_enabled,m.live_trading_enabled,
+                      m.risk_profile,m.execution_promotion_required,
                       COUNT(c.candle_id) raw_rows,MIN(c.open_time_utc) earliest,MAX(c.open_time_utc) latest,
                       (SELECT TOP (1) q.overall_execution_quality FROM app.execution_quality_snapshots q
                        WHERE q.market_id=m.market_id ORDER BY q.evaluated_at_utc DESC) quality_status,
@@ -329,8 +430,12 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                  AND c.timeframe='M15' AND c.completed=1 AND c.quality_status='PASS'
                  AND c.is_regular_session=1
                LEFT JOIN app.market_execution_states es ON es.market_id=m.market_id AND es.tenant_id=%s
-               WHERE m.enabled=1 GROUP BY m.market_id,m.symbol,m.display_name,m.calendar_code,
-                 m.market_timezone,m.session_open_local,m.session_close_local,es.mode ORDER BY m.symbol""",
+               WHERE m.enabled=1 AND m.research_enabled=1
+               GROUP BY m.market_id,m.symbol,m.display_name,m.calendar_code,
+                 m.market_timezone,m.session_open_local,m.session_close_local,m.market_tier,
+                 m.asset_class,m.research_enabled,m.training_enabled,m.signal_enabled,
+                 m.demo_trading_enabled,m.live_trading_enabled,m.risk_profile,
+                 m.execution_promotion_required,es.mode ORDER BY m.market_tier,m.symbol""",
             (tenant_id,),
         )
         markets = cursor.fetchall()
@@ -429,9 +534,21 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                 and quality_pass and m5_fresh and m15_fresh and rule_current and combined_ready
                 and session.should_receive_data and demo_execution_opt_in
                 and row["execution_mode"] == "DEMO_AUTO"
+                and bool(row["signal_enabled"]) and bool(row["demo_trading_enabled"])
             )
             result.append({
                 "symbol": row["symbol"], "display_name": row["display_name"],
+                "tier": int(row["market_tier"]), "asset_class": row["asset_class"],
+                "research_enabled": bool(row["research_enabled"]),
+                "training_enabled": bool(row["training_enabled"]),
+                "signal_enabled": bool(row["signal_enabled"]),
+                "demo_trading_enabled": bool(row["demo_trading_enabled"]),
+                "live_trading_enabled": bool(row["live_trading_enabled"]),
+                "risk_profile": row["risk_profile"],
+                "execution_promotion_required": bool(row["execution_promotion_required"]),
+                "eligibility": "RESEARCH_ONLY" if int(row["market_tier"]) == 3
+                else "VALIDATING" if not bool(row["demo_trading_enabled"])
+                else "DEMO_GATED",
                 "required_rows": required, "raw_m15_rows": int(row["raw_rows"]),
                 "feature_complete_rows": feature_rows,
                 "progress_pct": round(min(100, feature_rows / required * 100), 1),
@@ -459,6 +576,9 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                            "combined_decision_blocker": combined_decision.get("blocker_code"),
                            "demo_execution_opt_in": demo_execution_opt_in
                            if validated and forward_shadow_passed else None,
+                           "market_signal_enabled": bool(row["signal_enabled"]),
+                           "market_demo_enabled": bool(row["demo_trading_enabled"]),
+                           "research_only": int(row["market_tier"]) == 3,
                            "platform_gates": platform_ready_without_models},
                 "validation_evidence": {
                     "result": evaluation.get("result"),

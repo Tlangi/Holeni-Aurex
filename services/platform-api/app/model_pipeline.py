@@ -36,6 +36,23 @@ FEATURES = ["ret1", "ret4", "ema_gap", "rsi", "atr_pct", "range_pct", "volume_z"
 MODEL_ROOT = Path(__file__).resolve().parents[1] / "models"
 
 
+def inference_feature_vector(frame: pd.DataFrame, *, horizon: int = LABEL_HORIZON_BARS) -> pd.Series:
+    """The single production feature contract shared by research and live inference."""
+    featured = add_features(frame, horizon=horizon, labelled=False)
+    if featured.empty:
+        raise ValueError("INSUFFICIENT_FEATURE_ROWS")
+    vector = featured.iloc[-1][FEATURES].astype(float)
+    if not np.isfinite(vector.to_numpy()).all():
+        raise ValueError("NON_FINITE_FEATURE_VECTOR")
+    return vector
+
+
+def feature_vector_hash(vector: pd.Series, *, tolerance_decimals: int = 12) -> str:
+    payload = [(name, format(round(float(vector[name]), tolerance_decimals), ".12g"))
+               for name in FEATURES]
+    return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class Evaluation:
     model: object
@@ -394,7 +411,8 @@ def train_all_markets(
             """SELECT sv.strategy_version_id,m.market_id,m.symbol
                FROM app.strategy_versions sv JOIN app.strategies s ON s.strategy_id=sv.strategy_id
                CROSS JOIN app.markets m
-               WHERE s.strategy_name='Conservative FX Demo' AND sv.version='1.0' AND m.enabled=1"""
+               WHERE s.strategy_name='Conservative FX Demo' AND sv.version='1.0'
+                 AND m.enabled=1 AND m.training_enabled=1"""
         )
         markets = cursor.fetchall()
         for strategy_version_id, market_id, symbol in markets:
@@ -447,11 +465,13 @@ def train_all_markets(
                 cursor.execute(
                     """INSERT app.model_versions
                        (model_version_id,strategy_version_id,market_id,model_name,version,artifact_path,
-                        artifact_sha256,validation_auc,training_rows,status)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        artifact_sha256,validation_auc,training_rows,status,feature_version,label_version,
+                        validation_policy_version,source_identity,dirty_worktree)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (model_id, str(strategy_version_id), str(market_id), f"{symbol} HGB", version,
                      str(artifact.resolve()), digest, evaluation.auc, evaluation.training_rows,
-                     "CANDIDATE" if passed else "REJECTED"),
+                     "CANDIDATE" if passed else "REJECTED", FEATURE_VERSION, LABEL_VERSION,
+                     VALIDATION_POLICY_VERSION, str(identity["source_identity"]), bool(identity["dirty_worktree"])),
                 )
                 cursor.execute(
                     """INSERT app.model_evaluations

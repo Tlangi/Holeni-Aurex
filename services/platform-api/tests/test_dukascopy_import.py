@@ -16,6 +16,8 @@ def market() -> dict[str, object]:
 
 def test_dukascopy_filename_maps_germany_40() -> None:
     assert identify_file(Path("deuidxeur-m5-bid-2024-01-01-2026-08-26.csv")) == ("GERMANY40", "BID")
+    assert identify_file(Path("xauusd-m5-bid-2024-01-01-2025-01-01.csv")) == ("XAUUSD", "BID")
+    assert identify_file(Path("usdzar-m5-bid-2024-01-01-2025-01-01.csv")) == ("USDZAR", "BID")
 
 
 def test_unsupported_or_ask_file_is_rejected() -> None:

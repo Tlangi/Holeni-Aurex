@@ -131,7 +131,7 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
             """SELECT market_id,symbol,calendar_code,market_timezone,session_open_local,session_close_local
-               FROM app.markets WHERE enabled=1 ORDER BY symbol"""
+               FROM app.markets WHERE enabled=1 AND research_enabled=1 ORDER BY market_tier,symbol"""
         )
         markets = cursor.fetchall()
         for market in markets:
@@ -282,7 +282,9 @@ def sync_cost_models(settings: Settings) -> list[dict[str, object]]:
     outcomes: list[dict[str, object]] = []
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
-        cursor.execute("SELECT market_id,symbol FROM app.markets WHERE enabled=1 ORDER BY symbol")
+        cursor.execute(
+            "SELECT market_id,symbol FROM app.markets WHERE enabled=1 AND research_enabled=1 ORDER BY market_tier,symbol"
+        )
         for market in cursor.fetchall():
             market_id, symbol = str(market["market_id"]), str(market["symbol"])
             cursor.execute(

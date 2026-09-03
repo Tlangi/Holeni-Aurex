@@ -57,6 +57,26 @@ TARGET_CATALOG: dict[str, tuple[TargetSpecification, ...]] = {
         TargetSpecification("GERMANY40", 4, "COST_AWARE_RETURN", 1.5, 1.0, 0.0, 18.0, True),
         TargetSpecification("GERMANY40", 8, "VOLATILITY_ADJUSTED", 1.5, 1.0, 0.45, 25.0, True),
     ),
+    "GBPJPY": (
+        TargetSpecification("GBPJPY", 6, "COST_AWARE_RETURN", 1.8, 1.0, 0.0, 22.0),
+        TargetSpecification("GBPJPY", 12, "VOLATILITY_ADJUSTED", 1.8, 1.0, 0.45, 30.0),
+    ),
+    "EURJPY": (
+        TargetSpecification("EURJPY", 6, "COST_AWARE_RETURN", 1.5, 0.9, 0.0, 20.0),
+        TargetSpecification("EURJPY", 12, "VOLATILITY_ADJUSTED", 1.5, 0.9, 0.40, 28.0),
+    ),
+    "XAUUSD": (
+        TargetSpecification("XAUUSD", 4, "COST_AWARE_RETURN", 3.0, 2.0, 0.0, 40.0),
+        TargetSpecification("XAUUSD", 8, "VOLATILITY_ADJUSTED", 3.0, 2.0, 0.55, 60.0),
+    ),
+    "AUDJPY": (
+        TargetSpecification("AUDJPY", 6, "COST_AWARE_RETURN", 1.8, 1.1, 0.0, 24.0),
+        TargetSpecification("AUDJPY", 12, "VOLATILITY_ADJUSTED", 1.8, 1.1, 0.45, 32.0),
+    ),
+    "USDZAR": (
+        TargetSpecification("USDZAR", 8, "COST_AWARE_RETURN", 8.0, 5.0, 0.0, 70.0),
+        TargetSpecification("USDZAR", 16, "VOLATILITY_ADJUSTED", 8.0, 5.0, 0.65, 100.0),
+    ),
 }
 
 
@@ -81,6 +101,10 @@ class DisagreementAwareEnsemble(ClassifierMixin, BaseEstimator):
                 for value in self.classes_
             ]))
         return np.mean(aligned, axis=0)
+
+    def predict(self, features: pd.DataFrame) -> np.ndarray:
+        probabilities = self.predict_proba(features)
+        return self.classes_[np.argmax(probabilities, axis=1)]
 
     def member_disagreement(self, features: pd.DataFrame) -> np.ndarray:
         predictions = np.vstack([model.predict(features) for model in self.models_])
@@ -337,7 +361,12 @@ def cost_stress_evidence(frame: pd.DataFrame, directions: np.ndarray) -> list[di
     observed = frame["effective_cost_bps"].to_numpy(float)
     finite = observed[np.isfinite(observed)]
     quantiles = np.percentile(finite, [50, 75, 90, 95]) if len(finite) else np.zeros(4)
-    scenarios = [("SPREAD_P50", quantiles[0], 0.0, False),
+    scenarios = [("NORMAL_OBSERVED", observed, 0.0, False),
+                 ("SPREAD_X1_25", observed * 1.25, 0.0, False),
+                 ("SPREAD_X1_50", observed * 1.50, 0.0, False),
+                 ("SLIPPAGE_X2", observed, 2.0, False),
+                 ("COMBINED_STRESSED", observed * 1.50, 2.0, False),
+                 ("SPREAD_P50", quantiles[0], 0.0, False),
                  ("SPREAD_P75", quantiles[1], 0.0, False),
                  ("SPREAD_P90", quantiles[2], 0.0, False),
                  ("SPREAD_P95", quantiles[3], 0.0, False),
@@ -347,8 +376,11 @@ def cost_stress_evidence(frame: pd.DataFrame, directions: np.ndarray) -> list[di
     results = []
     for name, spread, extra, delayed in scenarios:
         returns = frame["delayed_future_return" if delayed else "future_return"].fillna(0).to_numpy(float)
-        metrics = trading_metrics(returns, directions, round_trip_cost_bps=np.full(len(frame), spread + extra))
-        results.append({"scenario": name, "spread_bps": float(spread),
+        costs = np.asarray(spread, dtype=float) + extra
+        if costs.ndim == 0:
+            costs = np.full(len(frame), float(costs))
+        metrics = trading_metrics(returns, directions, round_trip_cost_bps=costs)
+        results.append({"scenario": name, "spread_bps": float(np.mean(np.asarray(spread))),
                         "additional_cost_bps": extra, "entry_delay_bars": int(delayed), **metrics})
     return results
 

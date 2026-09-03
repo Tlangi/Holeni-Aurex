@@ -41,6 +41,7 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
     sync_run_id = str(uuid4())
     account: IGAccount
     positions: list[dict[str, object]]
+    working_orders: list[dict[str, object]]
     conversion: CurrencyRate
     try:
         with open_database(settings) as connection:
@@ -70,6 +71,7 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
                 with IGDemoClient(settings) as client:
                     account = client.account()
                     positions = client.positions()
+                    working_orders = client.working_orders()
                     conversion = client.zar_rate(account.currency)
                 tenant_id = _ensure_tenant(cursor, settings)
                 _ensure_owner(cursor, tenant_id, settings)
@@ -96,6 +98,8 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
                     account.currency,
                     correlation_id,
                 )
+                _store_working_orders(cursor, tenant_id, trading_account_id, working_orders)
+                _reconcile_order_state(cursor, tenant_id, trading_account_id)
                 refresh_daily_risk_ledger(
                     cursor,
                     tenant_id=tenant_id,
@@ -196,9 +200,144 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
         "conversion_source": conversion.source,
         "conversion_observed_at_utc": conversion.observed_at_utc.isoformat(),
         "open_positions": len(positions),
+        "working_orders": len(working_orders),
         "observed_at_utc": observed_at.isoformat(),
         "execution_enabled": False,
     }
+
+
+def _store_working_orders(cursor: object, tenant_id: str, trading_account_id: str,
+                          orders: list[dict[str, object]]) -> None:
+    seen: set[str] = set()
+    for item in orders:
+        order = item.get("workingOrderData") or item.get("workingOrder") or item
+        market = item.get("marketData") or item.get("market") or {}
+        deal_id = str(order.get("dealId") or "")
+        if not deal_id:
+            continue
+        seen.add(deal_id)
+        cursor.execute(
+            """MERGE app.broker_working_orders AS target
+               USING (SELECT %s trading_account_id,%s broker_deal_id) source
+               ON target.trading_account_id=source.trading_account_id
+               AND target.broker_deal_id=source.broker_deal_id
+               WHEN MATCHED THEN UPDATE SET deal_reference=%s,epic=%s,direction=%s,size=%s,
+                 level=%s,status='OPEN',last_seen_at_utc=SYSUTCDATETIME()
+               WHEN NOT MATCHED THEN INSERT
+                 (broker_working_order_id,tenant_id,trading_account_id,broker_deal_id,
+                  deal_reference,epic,direction,size,level,status)
+                 VALUES(NEWID(),%s,source.trading_account_id,source.broker_deal_id,
+                        %s,%s,%s,%s,%s,'OPEN');""",
+            (trading_account_id, deal_id, order.get("dealReference"),
+             market.get("epic") or order.get("epic"), order.get("direction"),
+             order.get("orderSize") or order.get("size"), order.get("orderLevel") or order.get("level"),
+             tenant_id, order.get("dealReference"), market.get("epic") or order.get("epic"),
+             order.get("direction"), order.get("orderSize") or order.get("size"),
+             order.get("orderLevel") or order.get("level")),
+        )
+    if seen:
+        placeholders = ",".join(["%s"] * len(seen))
+        cursor.execute(
+            f"""UPDATE app.broker_working_orders SET status='MISSING',last_seen_at_utc=SYSUTCDATETIME()
+                WHERE trading_account_id=%s AND status='OPEN' AND broker_deal_id NOT IN ({placeholders})""",
+            (trading_account_id, *sorted(seen)),
+        )
+    else:
+        cursor.execute("UPDATE app.broker_working_orders SET status='MISSING',last_seen_at_utc=SYSUTCDATETIME() WHERE trading_account_id=%s AND status='OPEN'",
+                       (trading_account_id,))
+
+
+def _reconcile_order_state(cursor: object, tenant_id: str, trading_account_id: str) -> None:
+    """Compare local submissions with both broker positions and working orders."""
+    issue_types = (
+        "UNKNOWN_WORKING_ORDER", "STALE_LOCAL_SUBMISSION",
+        "DUPLICATE_DEAL_REFERENCE", "SUBMISSION_UNKNOWN",
+    )
+    placeholders = ",".join(["%s"] * len(issue_types))
+    cursor.execute(
+        f"""UPDATE app.reconciliation_issues SET status='RESOLVED',
+               resolved_at_utc=SYSUTCDATETIME(),last_seen_at_utc=SYSUTCDATETIME()
+             WHERE trading_account_id=%s AND status IN ('OPEN','INVESTIGATING')
+               AND issue_type IN ({placeholders})""",
+        (trading_account_id, *issue_types),
+    )
+    cursor.execute(
+        """SELECT w.deal_reference,w.broker_deal_id FROM app.broker_working_orders w
+             WHERE w.trading_account_id=%s AND w.status='OPEN'
+               AND NOT EXISTS(SELECT 1 FROM app.order_intents oi
+                 WHERE oi.trading_account_id=w.trading_account_id
+                   AND (oi.client_reference=w.deal_reference
+                     OR oi.broker_deal_reference=w.broker_deal_id))""",
+        (trading_account_id,),
+    )
+    for reference, deal_id in cursor.fetchall():
+        _record_account_issue(cursor, tenant_id, trading_account_id,
+                              "UNKNOWN_WORKING_ORDER", str(reference or deal_id or ""),
+                              "Broker working order has no matching Aurex order intent")
+    cursor.execute(
+        """SELECT reference_value FROM (
+               SELECT broker_deal_reference reference_value FROM app.order_intents
+                 WHERE trading_account_id=%s AND broker_deal_reference IS NOT NULL
+               UNION ALL
+               SELECT deal_reference FROM app.broker_working_orders
+                 WHERE trading_account_id=%s AND status='OPEN' AND deal_reference IS NOT NULL
+             ) refs GROUP BY reference_value HAVING COUNT(*)>1""",
+        (trading_account_id, trading_account_id),
+    )
+    for row in cursor.fetchall():
+        _record_account_issue(cursor, tenant_id, trading_account_id,
+                              "DUPLICATE_DEAL_REFERENCE", str(row[0]),
+                              "Deal reference is duplicated across local or broker state")
+    cursor.execute(
+        """SELECT oi.client_reference,oi.status FROM app.order_intents oi
+             WHERE oi.trading_account_id=%s
+               AND oi.status IN ('SUBMITTING','SUBMITTED','CONFIRMING','RECONCILIATION_REQUIRED')
+               AND oi.updated_at_utc<DATEADD(minute,-5,SYSUTCDATETIME())
+               AND NOT EXISTS(SELECT 1 FROM app.positions p
+                 WHERE p.trading_account_id=oi.trading_account_id
+                   AND (p.order_intent_id=oi.order_intent_id OR p.broker_deal_id=oi.broker_deal_reference)
+                   AND p.status<>'CLOSED')
+               AND NOT EXISTS(SELECT 1 FROM app.broker_working_orders w
+                 WHERE w.trading_account_id=oi.trading_account_id AND w.status='OPEN'
+                   AND (w.deal_reference=oi.client_reference OR w.broker_deal_id=oi.broker_deal_reference))""",
+        (trading_account_id,),
+    )
+    for reference, state in cursor.fetchall():
+        _record_account_issue(cursor, tenant_id, trading_account_id,
+                              "STALE_LOCAL_SUBMISSION", str(reference),
+                              f"Local order intent remains {state} without broker evidence")
+    cursor.execute(
+        """SELECT client_reference FROM app.order_intents
+             WHERE trading_account_id=%s AND status='SUBMISSION_UNKNOWN'""",
+        (trading_account_id,),
+    )
+    for row in cursor.fetchall():
+        _record_account_issue(cursor, tenant_id, trading_account_id,
+                              "SUBMISSION_UNKNOWN", str(row[0]),
+                              "Submission outcome is ambiguous; automatic retry is prohibited")
+
+
+def _record_account_issue(cursor: object, tenant_id: str, trading_account_id: str,
+                          issue_type: str, reference: str, detail: str) -> None:
+    masked = f"••••{reference[-4:]}" if reference else None
+    cursor.execute(
+        """SELECT reconciliation_issue_id FROM app.reconciliation_issues
+             WHERE trading_account_id=%s AND issue_type=%s AND broker_reference_masked=%s
+               AND status IN ('OPEN','INVESTIGATING')""",
+        (trading_account_id, issue_type, masked),
+    )
+    row = cursor.fetchone()
+    if row:
+        cursor.execute("UPDATE app.reconciliation_issues SET last_seen_at_utc=SYSUTCDATETIME(),detail=%s WHERE reconciliation_issue_id=%s",
+                       (detail, str(row[0])))
+        return
+    cursor.execute(
+        """INSERT app.reconciliation_issues
+             (reconciliation_issue_id,tenant_id,trading_account_id,position_id,issue_type,status,
+              broker_reference_masked,detail,first_seen_at_utc,last_seen_at_utc)
+             VALUES(%s,%s,%s,NULL,%s,'OPEN',%s,%s,SYSUTCDATETIME(),SYSUTCDATETIME())""",
+        (str(uuid4()), tenant_id, trading_account_id, issue_type, masked, detail),
+    )
 
 
 def _snapshot_fingerprint(

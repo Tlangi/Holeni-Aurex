@@ -166,6 +166,7 @@ def login_owner(
             role=row[4],
         )
         raw_token = secrets.token_urlsafe(48)
+        csrf_token = secrets.token_urlsafe(32)
         if bool(row[9]):
             cursor.execute(
                 """INSERT app.authentication_attempts
@@ -181,8 +182,8 @@ def login_owner(
             """
             INSERT INTO app.auth_sessions
                 (session_id, tenant_id, user_id, token_hash, expires_at_utc,
-                 user_agent_hash)
-            VALUES (%s, %s, %s, %s, %s, %s);
+                 user_agent_hash,csrf_token_hash)
+            VALUES (%s, %s, %s, %s, %s, %s,%s);
             """,
             (
                 str(uuid4()),
@@ -191,6 +192,7 @@ def login_owner(
                 _token_hash(raw_token),
                 expires_at,
                 sha256((request.headers.get("user-agent") or "").encode()).digest(),
+                _token_hash(csrf_token),
             ),
         )
         cursor.execute(
@@ -219,6 +221,11 @@ def login_owner(
         samesite="strict",
         path="/",
     )
+    response.set_cookie(
+        key=settings.csrf_cookie_name, value=csrf_token,
+        max_age=settings.session_hours * 3600, httponly=False,
+        secure=settings.session_cookie_secure, samesite="strict", path="/",
+    )
     return user
 
 
@@ -236,7 +243,7 @@ def require_user(
         cursor = connection.cursor()
         cursor.execute(
             """
-            SELECT u.user_id, u.tenant_id, u.email, u.display_name, u.role
+            SELECT u.user_id, u.tenant_id, u.email, u.display_name, u.role,s.csrf_token_hash
             FROM app.auth_sessions s
             JOIN app.users u ON u.user_id=s.user_id AND u.tenant_id=s.tenant_id
             WHERE s.token_hash=%s AND s.revoked_at_utc IS NULL
@@ -247,6 +254,12 @@ def require_user(
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            supplied = request.headers.get(settings.csrf_header_name)
+            cookie_token = request.cookies.get(settings.csrf_cookie_name)
+            if not supplied or not cookie_token or not secrets.compare_digest(supplied, cookie_token) \
+                    or not secrets.compare_digest(_token_hash(supplied), bytes(row[5] or b"")):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
         cursor.execute(
             "UPDATE app.auth_sessions SET last_seen_at_utc=SYSUTCDATETIME() WHERE token_hash=%s;",
             (_token_hash(token),),
@@ -285,3 +298,4 @@ def logout_owner(
         )
         connection.commit()
     response.delete_cookie(settings.session_cookie_name, path="/")
+    response.delete_cookie(settings.csrf_cookie_name, path="/")

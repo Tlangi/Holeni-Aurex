@@ -11,7 +11,20 @@ from app.ig_demo import IGDemoClient, IGDemoUnavailable
 
 def _timestamp(value: object) -> datetime:
     text = str(value or "").strip().replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(text)
+    if not text:
+        raise ValueError("Historical candle timestamp is missing")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        parsed = None
+        for pattern in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M:%S.%f"):
+            try:
+                parsed = datetime.strptime(text, pattern)
+                break
+            except ValueError:
+                continue
+        if parsed is None:
+            raise ValueError(f"Unsupported historical candle timestamp: {text}")
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
@@ -23,6 +36,13 @@ def _midpoint(price: dict[str, Any]) -> Decimal:
     if traded is None:
         raise ValueError("Historical candle has no usable price")
     return Decimal(str(traded))
+
+
+def _completed_historical_bucket(opened: datetime, minutes: int, *, now: datetime | None = None) -> bool:
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return opened + timedelta(minutes=minutes) <= reference.astimezone(timezone.utc)
 
 
 def persist_historical_prices(
@@ -44,6 +64,8 @@ def persist_historical_prices(
                 if str(candle.get("marketStatus") or "").upper() not in {"", "TRADEABLE", "CLOSED"}:
                     continue
                 opened = _timestamp(candle.get("snapshotTimeUTC") or candle.get("snapshotTime"))
+                if not _completed_historical_bucket(opened, minutes):
+                    continue
                 values = [_midpoint(candle[name]) for name in ("openPrice", "highPrice", "lowPrice", "closePrice")]
                 if values[1] < max(values[0], values[3]) or values[2] > min(values[0], values[3]):
                     continue
@@ -70,8 +92,14 @@ def persist_historical_prices(
 
 def bootstrap_markets(settings: Settings, *, count: int) -> dict[str, object]:
     results: dict[str, int] = {}
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT symbol FROM app.markets WHERE enabled=1 AND research_enabled=1 ORDER BY market_tier,symbol"
+        )
+        symbols = tuple(str(row[0]) for row in cursor.fetchall())
     with IGDemoClient(settings) as client:
-        for symbol in ("EURUSD", "GBPUSD", "USDJPY"):
+        for symbol in symbols:
             try:
                 results[symbol] = persist_historical_prices(
                     settings, client, symbol=symbol, count=count
@@ -98,9 +126,9 @@ def seed_market_history(
         cursor.execute(
             """SELECT s.market_id,m.symbol,s.target_m15_candles,s.retry_after_utc,
                       (SELECT COUNT(*) FROM app.candles c WHERE c.market_id=s.market_id
-                       AND c.timeframe='M15' AND c.completed=1) AS available
+                       AND c.timeframe='M15' AND c.completed=1 AND c.quality_status='PASS') AS available
                FROM app.market_seed_state s JOIN app.markets m ON m.market_id=s.market_id
-               WHERE m.enabled=1 ORDER BY m.symbol"""
+               WHERE m.enabled=1 AND m.research_enabled=1 ORDER BY m.market_tier,m.symbol"""
         )
         states = cursor.fetchall()
 

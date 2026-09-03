@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import Settings
 from app.database import open_database
+from app.instrument_registry import normalized_symbol
 from app.model_pipeline import Evaluation, _market_frame, chronological_evaluate
 from app.model_governance import (
     LABEL_HORIZON_BARS,
@@ -53,8 +54,9 @@ class ModelTournamentRequest(BaseModel):
     @field_validator("market")
     @classmethod
     def supported_market(cls, value: str) -> str:
-        normalized = value.strip().upper()
-        if normalized not in {"EURUSD", "GBPUSD", "USDJPY", "GERMANY40"}:
+        try:
+            normalized = normalized_symbol(value)
+        except ValueError as exc:
             raise ValueError("Unsupported tournament market")
         return normalized
 
@@ -133,7 +135,37 @@ def challengers(max_threads: int = 2) -> tuple[Challenger, ...]:
 
 
 def selective_challengers(max_threads: int = 2) -> tuple[Challenger, ...]:
-    base = challengers(max_threads)
+    binary = challengers(max_threads)
+    replacements = {
+        "LIGHTGBM": Challenger(
+            "LIGHTGBM", "LightGBM", 4,
+            lambda: LGBMClassifier(
+                objective="multiclass", num_class=3, n_estimators=250, learning_rate=0.04,
+                num_leaves=15, max_depth=5, min_child_samples=30, subsample=0.80,
+                subsample_freq=1, colsample_bytree=0.80, reg_alpha=0.10, reg_lambda=1.0,
+                random_state=42, n_jobs=max_threads, verbosity=-1, deterministic=True,
+                force_col_wise=True),
+            {"objective": "multiclass", "num_class": 3, "n_estimators": 250,
+             "learning_rate": 0.04, "max_depth": 5, "threads": max_threads}),
+        "XGBOOST": Challenger(
+            "XGBOOST", "XGBoost", 5,
+            lambda: XGBClassifier(
+                objective="multi:softprob", num_class=3, n_estimators=250, learning_rate=0.04,
+                max_depth=4, min_child_weight=10, subsample=0.80, colsample_bytree=0.80,
+                reg_alpha=0.10, reg_lambda=1.0, random_state=42, n_jobs=max_threads,
+                tree_method="hist", eval_metric="mlogloss", verbosity=0),
+            {"objective": "multi:softprob", "num_class": 3, "n_estimators": 250,
+             "learning_rate": 0.04, "max_depth": 4, "threads": max_threads}),
+        "CATBOOST": Challenger(
+            "CATBOOST", "CatBoost", 6,
+            lambda: CatBoostClassifier(
+                loss_function="MultiClass", iterations=250, learning_rate=0.04, depth=5,
+                l2_leaf_reg=3.0, random_seed=42, verbose=False, thread_count=max_threads,
+                allow_writing_files=False),
+            {"loss_function": "MultiClass", "iterations": 250, "learning_rate": 0.04,
+             "depth": 5, "threads": max_threads}),
+    }
+    base = tuple(replacements.get(item.key, item) for item in binary)
     lookup = {item.key: item for item in base}
     ensemble = Challenger(
         "CALIBRATED_DISAGREEMENT_ENSEMBLE", "Calibrated disagreement ensemble", 7,

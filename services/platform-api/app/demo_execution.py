@@ -16,6 +16,7 @@ from app.ig_execution import (
 from app.ig_sync import SyncAlreadyRunning, sync_ig_demo
 from app.market_intelligence import model_readiness
 from app.order_lifecycle import transition_intent
+from app.position_sizing import PositionSizingInput, calculate_position_size
 from app.readiness import read_trading_readiness
 
 
@@ -47,9 +48,13 @@ def execute_one_off_demo(
         cursor.execute(
             """SELECT oi.order_intent_id,oi.status,oi.created_at_utc,oi.direction,
                       oi.calculated_size,oi.stop_level,oi.take_profit_level,oi.client_reference,
-                      oi.trading_account_id,m.market_id,m.symbol,m.ig_epic,
+                      oi.risk_amount_zar,
+                      oi.trading_account_id,m.market_id,m.symbol,m.ig_epic,m.market_tier,
+                      m.signal_enabled,m.demo_trading_enabled,m.live_trading_enabled,
                       s.model_version_id,s.market_decision_id,rd.decision AS risk_decision,
-                      r.min_deal_size,r.deal_currency,r.expiry,
+                      r.min_deal_size,r.size_increment,r.size_increment_authoritative,r.value_per_price_point_zar,
+                      r.margin_factor_pct,r.current_bid,r.current_ask,r.deal_currency,r.expiry,
+                      snap.equity,snap.available_funds,
                       ec.mode,ec.new_orders_enabled
                FROM app.order_intents oi
                JOIN app.signals s ON s.signal_id=oi.signal_id
@@ -60,12 +65,20 @@ def execute_one_off_demo(
                JOIN app.broker_market_rules r ON r.broker_connection_id=bc.broker_connection_id
                     AND r.market_id=m.market_id
                JOIN app.engine_controls ec ON ec.tenant_id=oi.tenant_id
+               OUTER APPLY (SELECT TOP (1) equity,available_funds FROM app.account_snapshots x
+                    WHERE x.trading_account_id=oi.trading_account_id ORDER BY observed_at_utc DESC) snap
                WHERE oi.order_intent_id=%s AND oi.tenant_id=%s""",
             (str(request.order_intent_id), tenant_id),
         )
         intent = cursor.fetchone()
         if not intent:
             raise IGExecutionBlocked("Order intent does not exist for this tenant")
+        if int(intent["market_tier"]) == 3:
+            raise IGExecutionBlocked("RESEARCH_ONLY markets cannot submit broker orders")
+        if not bool(intent["signal_enabled"]) or not bool(intent["demo_trading_enabled"]):
+            raise IGExecutionBlocked("The selected market has not been explicitly promoted for demo execution")
+        if bool(intent["live_trading_enabled"]):
+            raise IGExecutionBlocked("Live-trading market state is not supported by this demo orchestrator")
         market = next((item for item in markets if item["symbol"] == intent["symbol"]), None)
         if not market or not bool(market["demo_auto_ready"]):
             raise IGExecutionBlocked("The selected market has not passed DEMO_TEST_READY")
@@ -76,6 +89,24 @@ def execute_one_off_demo(
             raise IGExecutionBlocked("The risk-approved intent is stale")
         if Decimal(str(intent["calculated_size"])) != Decimal(str(intent["min_deal_size"])):
             raise IGExecutionBlocked("The controlled test must use the broker minimum size")
+        if not bool(intent["size_increment_authoritative"]):
+            raise IGExecutionBlocked("Broker deal-size increment is not authoritative")
+        entry = (Decimal(str(intent["current_ask"])) if intent["direction"] == "BUY"
+                 else Decimal(str(intent["current_bid"])))
+        equity = Decimal(str(intent["equity"] or 0))
+        risk_amount = Decimal(str(intent["risk_amount_zar"] or 0))
+        risk_pct = risk_amount / equity * Decimal("100") if equity > 0 else Decimal("0")
+        sizing = calculate_position_size(PositionSizingInput(
+            account_equity=equity, risk_percentage=risk_pct, entry_price=entry,
+            stop_price=Decimal(str(intent["stop_level"])),
+            broker_minimum_size=Decimal(str(intent["min_deal_size"])),
+            broker_size_increment=Decimal(str(intent["size_increment"] or 0)),
+            value_per_point_account_currency=Decimal(str(intent["value_per_price_point_zar"] or 0)),
+            margin_factor_pct=Decimal(str(intent["margin_factor_pct"] or 0)),
+            available_margin=Decimal(str(intent["available_funds"] or 0)),
+        ))
+        if not sizing.approved or sizing.broker_rounded_size < Decimal(str(intent["min_deal_size"])):
+            raise IGExecutionBlocked(sizing.rejection_reason or "Canonical position sizing rejected the intent")
         if not intent["market_decision_id"]:
             raise IGExecutionBlocked("An audited combined market decision is required")
 

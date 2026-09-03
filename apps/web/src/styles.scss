@@ -420,3 +420,12 @@ html { scroll-behavior: smooth; }
   .ohlc-strip span { border-left: 0; padding-left: 0; }
   .risk-facts { grid-template-columns: 1fr 1fr; }
 }
+[hidden] { display: none !important; }
+.research-page .page-tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; margin: 16px 0; padding: 8px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.96); box-shadow: var(--shadow); }
+.research-page .page-tabs button { min-height: 34px; padding: 0 13px; white-space: nowrap; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #475467; cursor: pointer; font-size: 10px; font-weight: 650; }
+.research-page .page-tabs button.active { border-color: #b2ccff; background: #eff6ff; color: #175cd3; }
+.research-page .market-tiers { display: grid; gap: 18px; }
+.research-page .tier-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin: 4px 2px -8px; }
+.research-page .tier-heading small { color: #64748b; font-weight: 700; letter-spacing: .08em; }
+.research-page .tier-heading h2 { margin: 3px 0 0; color: #102a49; font-size: 18px; }
+.research-page .tier-heading > span { color: #64748b; font-size: 13px; }

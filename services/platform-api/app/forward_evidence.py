@@ -13,6 +13,10 @@ from app.trading_operations import read_reconciliation_status, read_risk_status
 
 
 def evidence_state(checks: dict[str, object]) -> str:
+    if int(checks.get("tier") or 1) == 3:
+        return "RESEARCH_ONLY"
+    if not bool(checks.get("signal_enabled", True)):
+        return "VALIDATING"
     if bool(checks.get("demo_auto_ready")):
         return "DEMO_TEST_READY"
     market_checks = checks.get("checks") or {}
@@ -27,7 +31,9 @@ def run_market_quality_audits(settings: Settings) -> list[dict[str, object]]:
     outcomes: list[dict[str, object]] = []
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
-        cursor.execute("SELECT market_id,symbol FROM app.markets WHERE enabled=1 ORDER BY symbol")
+        cursor.execute(
+            "SELECT market_id,symbol FROM app.markets WHERE enabled=1 AND research_enabled=1 ORDER BY market_tier,symbol"
+        )
         markets = cursor.fetchall()
     for market in markets:
         for timeframe in ("M5", "M15"):

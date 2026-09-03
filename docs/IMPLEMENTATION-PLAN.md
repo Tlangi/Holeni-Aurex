@@ -1,6 +1,6 @@
 # Forex SaaS implementation plan
 
-## Authoritative current status — 31 August 2026
+## Authoritative current status — 1 September 2026
 
 This section is the current source of truth. The numbered delivery record below
 is retained as implementation history and must not be read as current readiness.
@@ -42,6 +42,33 @@ Older status statements are indexed in
   profit protection at 0.5%, and calculates risk returns in the IG account's
   native currency. ZAR remains reporting-only, so exchange-rate movement cannot
   activate a trading-risk control.
+- Migration 033 adds an isolated `EXPERIMENTAL IG DEMO` broker-evidence
+  programme. It has separate programme, risk-policy, daily-ledger, attempt,
+  observation and reconciliation records; immutable model provenance; a
+  database idempotency key; one-shot submission; Demo environment lock;
+  mandatory stop/target/maximum holding period; minimum-size risk rejection;
+  and a global unknown-submission circuit breaker. It bypasses only validated
+  model and forward-shadow promotion gates and has no promotion authority.
+- `EXPERIMENTAL_DEMO_ENABLED` defaults to false and remains false. Migration 033
+  created the task-specified conservative policy (0.10% risk, 0.25% hard cap,
+  0.50% daily loss, 1.00% programme drawdown, two losing trades, one global
+  position), but created and armed no programme. Tier 3 remains database- and
+  policy-blocked as research-only.
+- The owner-only Experimental Lab exposes real draft/control/readiness,
+  reconciliation and one-shot-attempt APIs. Startup recovery runs before the
+  scheduler when the feature is enabled; a disabled deployment performs no
+  broker request.
+- Current operational prerequisites pass for the active owner, base risk
+  profile, current base daily ledger, IG Demo account snapshot, market workers,
+  broker rules, reconciliation and unknown submissions. Normal `DEMO_AUTO`
+  remains blocked by zero validated models. Experimental Demo remains blocked
+  by its deliberately disabled feature flag; no experiment is armed.
+- Recent gap recovery now requests the exact bounded IG time window instead of
+  the newest history page, expands M15 gaps into their three underlying M5
+  candles, and resolves a gap only after every requested timestamp exists. An
+  exact verification disproved earlier `COMPLETED` job labels: nine recent gaps
+  remain unresolved. Their corrected targeted retries are failed/retry-deferred
+  because IG is currently unreachable; no gap was falsely marked recovered.
 
 ### Current implementation order
 
@@ -52,8 +79,10 @@ Older status statements are indexed in
    enable only forward shadow.
 4. Accumulate the required frozen forward-shadow observations and monitor model,
    feature and cost drift.
-5. Consider one non-retrying minimum-size IG Demo plumbing test only when that
-   specific market passes every gate. No live path is enabled.
+5. Complete rejection, reconciliation, startup-recovery and controlled-close
+   verification for the isolated evidence programme. Only then may the owner
+   explicitly enable the global flag, create and arm one time-boxed Tier 1
+   canary. No experiment is armed and no live path is enabled.
 
 ## 1. Decisions and boundaries
 
@@ -758,3 +787,82 @@ streaming independently. Event regimes and sustained forward-shadow evidence
 remain blocked until their prerequisite evidence exists. Drift writers are
 active, but real drift scores necessarily require an approved model and
 post-approval observations.
+
+## 25. Tiered market research expansion and UI navigation
+
+- Migration 032 establishes the database-backed instrument registry for the
+  original Tier 1 markets, Tier 2 research markets (GBP/JPY, EUR/JPY and spot
+  gold) and Tier 3 research-only markets (AUD/JPY and USD/ZAR).
+- Broker epics and dealing rules were resolved against IG Demo rather than
+  guessed. Tier 2 and Tier 3 begin with signal, demo-order and live-order flags
+  disabled. A database constraint permanently prevents Tier 3 execution while
+  it remains Tier 3; live eligibility also requires demo eligibility.
+- Streaming, import, feature, training, target and research paths now discover
+  enabled instruments from the registry. Readiness and execution paths count
+  only separately promoted signal/demo markets, so research additions cannot
+  dilute or bypass the existing Tier 1 gates.
+- The API publishes tier, asset class, reporting currency, broker metadata,
+  research/training eligibility, execution ceiling and supported chart
+  timeframes. M30, H1, H4 and D1 views are bounded aggregations of persisted M15
+  evidence; persisted M5 and M15 remain authoritative.
+- Market-specific V4 target definitions are registered for all nine markets.
+  These definitions create research eligibility only; no candidate is approved
+  and no order authority is created by adding an instrument or importing rows.
+- The dashboard is split into Overview, Research, Markets, Trading and
+  Operations tabs. Research is split into Overview, Protocol, Data quality,
+  Holdout and Experiments tabs, reducing scrolling while retaining accessible
+  section navigation.
+- On 1 September 2026, bounded Dukascopy history was imported for GBP/JPY
+  (14,784 M5 and 4,928 M15 rows through 29 February 2024), EUR/JPY
+  (12,504 M5 and 4,168 M15 rows through 20 February 2024), XAU/USD
+  (14,784 M5 and 4,928 M15 rows through 29 February 2024), and a small AUD/JPY
+  slice (1,152 M5 and 384 M15 rows through 4 January 2024). EUR/JPY and AUD/JPY
+  are explicitly partial because the provider returned HTTP 429; USD/ZAR
+  remains queued for a cooldown retry. No synthetic rows were created.
+- IG v2 warm-up responses omitted their UTC field and included 96 timestamps
+  ahead of the server clock. Those rows were retained for audit, marked
+  `QUARANTINED`, written to the provider-row quarantine table and excluded from
+  model features. Historical seeding now rejects unfinished/future buckets and
+  counts only `quality_status='PASS'` toward readiness.
+
+The next controlled work is to finish the remaining bounded historical imports,
+let IG streaming extend the datasets, run leakage/quality audits, and then run
+independent market-specific tournaments. Tier 2 promotion requires the complete
+governed model, holdout and forward-shadow lifecycle. Tier 3 remains research
+only unless a future reviewed migration changes its tier and risk policy.
+
+## 26. Experimental canary operational closure
+
+- Migration 034 records broker bid/ask snapshots, explicit recovery outcomes and
+  resumable provider-history boundaries. Historical defects remain visible while
+  the configurable 24-hour current-execution window can recover independently
+  after contiguous fresh candles.
+- Server-context checks on 1 September 2026 passed DNS, TCP 443, TLS 1.3, HTTP,
+  IG Demo authentication, account retrieval, market metadata, current quotes and
+  bounded history. The earlier direct failure was the Codex sandbox's outbound
+  socket restriction, not the Windows service, host firewall or IG credentials.
+- All nine broker rules were refreshed from IG Demo and include current bid/ask,
+  minimum size, minimum stop distance, point value, margin and market status.
+- Nine exact gaps were queried through the bounded recovery path. IG returned no
+  matching rows, so all remain historical defects classified
+  `BROKER_DATA_UNAVAILABLE`; none was marked recovered and no price was fabricated.
+- A one-page quota-bounded history probe ran for every research market. IG returned
+  ten valid newest candles and reported one page for each instrument. Watermarks
+  prevent repeated requests beyond the observed response boundary. Uneven bulk
+  coverage remains attributable to earlier Dukascopy imports and partial or
+  rate-limited jobs, not equivalent provider histories.
+- Experimental Lab now presents market-specific continuity, current spread,
+  minimum-size risk, stop/target geometry, model-artifact integrity and exact
+  blockers. Candidate artifacts must load, checksum-match and infer deterministically.
+  Embedded metadata is preferred; an exact model-version diagnostic experiment is
+  an accepted audited metadata source for legacy artifacts.
+- Germany 40 is the current infrastructure-canary recommendation: its recent
+  execution window is clean and the current IG minimum-size projection is below
+  both the 0.10% default and 0.25% hard maximum. This is not a profitability claim
+  and does not change the model's `REJECTED` status.
+- A canary is limited to one submission. A confirmed broker rejection completes
+  it immediately; an accepted position completes only after confirmed close.
+  Unknown submission remains a global circuit breaker.
+- `EXPERIMENTAL_DEMO_ENABLED` remains false. No programme was created or armed and
+  no broker order was submitted. Enabling the flag is a separate deployment action
+  and still cannot bypass explicit owner arming or any backend gate.

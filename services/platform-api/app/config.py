@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     sql_driver: str = "ODBC Driver 18 for SQL Server"
     sql_encrypt: bool = True
     sql_trust_server_certificate: bool = True
+    trusted_hosts: str = "127.0.0.1,localhost"
 
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
@@ -61,6 +62,7 @@ class Settings(BaseSettings):
     ig_environment: str = "demo"
     allow_demo_trading: bool = False
     allow_live_trading: bool = False
+    experimental_demo_enabled: bool = False
 
     reporting_currency: str = "ZAR"
     app_timezone: str = "Africa/Johannesburg"
@@ -68,6 +70,8 @@ class Settings(BaseSettings):
     owner_display_name: str = "Demo owner"
     owner_email: str = ""
     session_cookie_name: str = "aurex_session"
+    csrf_cookie_name: str = "aurex_csrf"
+    csrf_header_name: str = "x-aurex-csrf"
     session_hours: int = 12
     session_cookie_secure: bool = False
     auth_hash_pepper: str = Field(default="", repr=False)
@@ -127,6 +131,19 @@ class Settings(BaseSettings):
 
     trading_mode: str = "disabled"
     broker_environment: str = "demo"
+
+    @model_validator(mode="after")
+    def enforce_external_security(self) -> "Settings":
+        if self.app_env.lower() in {"production", "staging"}:
+            missing = []
+            if len(self.auth_hash_pepper) < 32: missing.append("AUTH_HASH_PEPPER")
+            if not self.session_cookie_secure: missing.append("SESSION_COOKIE_SECURE")
+            if self.sql_trust_server_certificate: missing.append("SQL_TRUST_SERVER_CERTIFICATE")
+            if any(origin.startswith("http://") for origin in self.allowed_origins):
+                missing.append("HTTPS_WEB_ORIGINS")
+            if missing:
+                raise ValueError("External deployment security requirements missing: " + ",".join(missing))
+        return self
 
     @field_validator("trading_mode")
     @classmethod
@@ -232,6 +249,10 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.web_origins.split(",") if origin.strip()]
 
     @property
+    def allowed_hosts(self) -> list[str]:
+        return [host.strip() for host in self.trusted_hosts.split(",") if host.strip()]
+
+    @property
     def database_configured(self) -> bool:
         return bool(self.sql_server and self.sql_database and self.sql_username and self.sql_password)
 
@@ -248,6 +269,19 @@ class Settings(BaseSettings):
         """The immutable, fail-closed configuration gate for broker execution."""
         return (
             self.trading_mode == "demo"
+            and self.ig_environment == "demo"
+            and self.broker_environment == "demo"
+            and self.allow_demo_trading
+            and not self.allow_live_trading
+            and self.ig_configured
+        )
+
+    @property
+    def experimental_demo_configured(self) -> bool:
+        """Independent fail-closed opt-in for the broker-evidence programme."""
+        return (
+            self.experimental_demo_enabled
+            and self.trading_mode == "demo"
             and self.ig_environment == "demo"
             and self.broker_environment == "demo"
             and self.allow_demo_trading

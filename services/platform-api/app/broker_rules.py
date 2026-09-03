@@ -75,12 +75,15 @@ def sync_broker_market_rules(
                          stop_distance_unit=%s,lot_size=%s,market_status=%s,
                          deal_currency=%s,expiry=%s,force_open_allowed=%s,market_order_preference=%s,
                          margin_factor_pct=%s
+                         ,current_bid=%s,current_ask=%s,size_increment_source=%s,
+                         size_increment_authoritative=%s,raw_rule_sha256=%s
                        WHEN NOT MATCHED THEN INSERT
                          (broker_market_rule_id,broker_connection_id,market_id,min_deal_size,
                           size_increment,min_stop_distance,value_per_price_point_zar,
                           source_currency,observed_at_utc,stop_distance_unit,lot_size,market_status,
-                          deal_currency,expiry,force_open_allowed,market_order_preference,margin_factor_pct)
-                       VALUES(NEWID(),source.broker_connection_id,source.market_id,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);""",
+                          deal_currency,expiry,force_open_allowed,market_order_preference,margin_factor_pct,
+                          current_bid,current_ask,size_increment_source,size_increment_authoritative,raw_rule_sha256)
+                       VALUES(NEWID(),source.broker_connection_id,source.market_id,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);""",
                     (
                         str(broker["broker_connection_id"]), str(market["market_id"]),
                         rule.min_deal_size, rule.size_increment, rule.min_stop_distance,
@@ -88,11 +91,15 @@ def sync_broker_market_rules(
                         rule.stop_distance_unit, rule.lot_size, rule.market_status,
                         rule.deal_currency, rule.expiry, rule.force_open_allowed, rule.market_order_preference,
                         rule.margin_factor_pct,
+                        rule.current_bid, rule.current_ask,
+                        rule.size_increment_source, rule.size_increment_authoritative, rule.raw_rule_sha256,
                         rule.min_deal_size, rule.size_increment, rule.min_stop_distance,
                         rule.value_per_price_unit_zar, rule.source_currency, rule.observed_at_utc,
                         rule.stop_distance_unit, rule.lot_size, rule.market_status,
                         rule.deal_currency, rule.expiry, rule.force_open_allowed, rule.market_order_preference,
                         rule.margin_factor_pct,
+                        rule.current_bid, rule.current_ask,
+                        rule.size_increment_source, rule.size_increment_authoritative, rule.raw_rule_sha256,
                     ),
                 )
                 outcomes.append({"symbol": market["symbol"], "result": "SYNCHRONIZED", "market_status": rule.market_status})

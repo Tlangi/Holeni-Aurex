@@ -463,7 +463,12 @@ def generate_market_decisions(settings: Settings, tenant_id: str) -> list[dict[s
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
         macro = _latest_currency_scores(cursor, now)
-        cursor.execute("SELECT market_id,symbol,base_currency,quote_currency FROM app.markets WHERE enabled=1 ORDER BY symbol")
+        cursor.execute(
+            """SELECT market_id,symbol,base_currency,quote_currency,market_tier,
+                      signal_enabled,demo_trading_enabled
+               FROM app.markets WHERE enabled=1 AND research_enabled=1
+               ORDER BY market_tier,symbol"""
+        )
         markets = cursor.fetchall()
         for market in markets:
             frame = _market_frame(connection.cursor(), str(market["market_id"]))
@@ -518,6 +523,10 @@ def generate_market_decisions(settings: Settings, tenant_id: str) -> list[dict[s
                 elif model_direction != decision:
                     blocker = "MODEL_MACRO_DIRECTION_CONFLICT"
             executable = decision != "HOLD" and blocker is None
+            if int(market["market_tier"]) == 3:
+                decision, executable, blocker = "HOLD", False, "RESEARCH_ONLY"
+            elif not bool(market["signal_enabled"]) or not bool(market["demo_trading_enabled"]):
+                decision, executable, blocker = "HOLD", False, "MARKET_NOT_PROMOTED"
             cursor.execute(
                 "SELECT TOP (1) candle_id FROM app.candles WHERE market_id=%s AND timeframe='M15' AND completed=1 AND quality_status='PASS' AND is_regular_session=1 ORDER BY open_time_utc DESC",
                 (str(market["market_id"]),),
@@ -528,6 +537,11 @@ def generate_market_decisions(settings: Settings, tenant_id: str) -> list[dict[s
                                   "base_score": float(base["composite_score"]) if base else None,
                                   "quote_score": float(quote["composite_score"]) if quote else None},
                         "model": {"status": "VALIDATED" if model else "NOT_VALIDATED", "direction": model_direction},
+                        "market_eligibility": {
+                            "tier": int(market["market_tier"]),
+                            "signal_enabled": bool(market["signal_enabled"]),
+                            "demo_trading_enabled": bool(market["demo_trading_enabled"]),
+                        },
                         "risk_authority": "DETERMINISTIC_RISK_ENGINE"}
             input_payload = json.dumps({"tenant": tenant_id, "market": str(market["market_id"]), "candle": candle_id,
                                         "technical": round(technical, 8), "macro": round(macro_score, 8),

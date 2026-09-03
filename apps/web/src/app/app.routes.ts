@@ -7,6 +7,11 @@ import { ResearchComponent } from './research';
 export const routes: Routes = [
   { path: 'login', component: LoginComponent },
   { path: 'research', component: ResearchComponent, canActivate: [ownerGuard] },
+  {
+    path: 'experimental-lab',
+    loadComponent: () => import('./experimental-lab').then((module) => module.ExperimentalLabComponent),
+    canActivate: [ownerGuard],
+  },
   { path: '', component: DashboardComponent, canActivate: [ownerGuard] },
   { path: '**', redirectTo: '' },
 ];

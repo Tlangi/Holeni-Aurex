@@ -17,6 +17,7 @@ from sklearn.metrics import roc_auc_score
 
 from app.config import Settings
 from app.database import open_database
+from app.instrument_registry import SUPPORTED_SYMBOLS
 from app.model_pipeline import (
     FEATURES,
     MODEL_ROOT,
@@ -67,8 +68,11 @@ SELECTIVE_MODEL_FAMILIES = {
 }
 
 
+MARKET_PATTERN = "^(" + "|".join(sorted(SUPPORTED_SYMBOLS)) + ")$"
+
+
 class FreezeCandidateRequest(BaseModel):
-    market: str = Field(default="GERMANY40", pattern="^(EURUSD|GBPUSD|USDJPY|GERMANY40)$")
+    market: str = Field(default="GERMANY40", pattern=MARKET_PATTERN)
     holdout_fraction: float | None = Field(default=None, ge=0.10, le=0.30)
     notes: str = Field(default="Frozen candidate for single-use final holdout", max_length=1000)
 
@@ -89,7 +93,7 @@ class ApproveHoldoutRequest(BaseModel):
 
 
 class ReserveResearchLineageRequest(BaseModel):
-    market: str = Field(pattern="^(EURUSD|GBPUSD|USDJPY|GERMANY40)$")
+    market: str = Field(pattern=MARKET_PATTERN)
     hypothesis: str = Field(min_length=20, max_length=1000)
     chosen_features: list[str] = Field(default_factory=lambda: list(FEATURES))
     model_families: list[str] = Field(default_factory=lambda: sorted(SELECTIVE_MODEL_FAMILIES))

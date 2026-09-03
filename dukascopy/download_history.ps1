@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('EURUSD','GBPUSD','USDJPY','GERMANY40','ALL')]
+    [ValidateSet('EURUSD','GBPUSD','USDJPY','GERMANY40','GBPJPY','EURJPY','XAUUSD','AUDJPY','USDZAR','ALL')]
     [string]$Market = 'ALL',
     [ValidatePattern('^\d{4}-\d{2}-\d{2}$')]
     [string]$From = '2024-01-01',
@@ -28,6 +28,11 @@ $mapping = [ordered]@{
     GBPUSD = 'gbpusd'
     USDJPY = 'usdjpy'
     GERMANY40 = 'deuidxeur'
+    GBPJPY = 'gbpjpy'
+    EURJPY = 'eurjpy'
+    XAUUSD = 'xauusd'
+    AUDJPY = 'audjpy'
+    USDZAR = 'usdzar'
 }
 $selected = if ($Market -eq 'ALL') { $mapping.Keys } else { @($Market) }
 Push-Location $scriptRoot

@@ -5,7 +5,7 @@ import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal
 from pathlib import Path
 
 import joblib
@@ -14,9 +14,11 @@ import pandas as pd
 
 from app.config import Settings
 from app.database import open_database
-from app.model_pipeline import FEATURES, _market_frame, add_features
+from app.model_pipeline import (FEATURES, _market_frame, add_features, feature_vector_hash,
+                                inference_feature_vector)
 from app.order_lifecycle import record_created_intent, transition_intent
-from app.shadow_trades import mark_shadow_trades, open_shadow_trade
+from app.position_sizing import PositionSizingInput, calculate_position_size
+from app.shadow_trades import mark_shadow_trades, open_shadow_trade, record_shadow_candidate
 from app.research_protocol import (
     PROTOCOL_VERSION,
     TARGET_CATALOG,
@@ -121,23 +123,26 @@ def evaluate_risk(item: RiskInput) -> RiskResult:
     portfolio_limit = item.equity_zar * item.max_portfolio_risk_pct / Decimal("100")
     if item.reserved_risk_zar + planned_risk > portfolio_limit:
         return RiskResult(False, "MAX_PORTFOLIO_RISK")
-    raw_size = planned_risk / (stop_distance * item.value_per_price_point_zar)
-    steps = (raw_size / item.size_increment).to_integral_value(rounding=ROUND_FLOOR)
-    size = steps * item.size_increment
-    if size < item.min_deal_size:
-        return RiskResult(False, "BELOW_BROKER_MINIMUM_SIZE")
     if item.available_margin_zar is None or item.margin_factor_pct is None or item.margin_factor_pct <= 0:
         return RiskResult(False, "MARGIN_EVIDENCE_MISSING")
-    estimated_margin = (
-        item.current_price * size * item.value_per_price_point_zar
-        * item.margin_factor_pct / Decimal("100")
-    )
-    if estimated_margin > item.available_margin_zar:
-        return RiskResult(False, "INSUFFICIENT_AVAILABLE_MARGIN")
     sign = Decimal("1") if item.direction == "BUY" else Decimal("-1")
     stop = item.current_price - sign * stop_distance
+    sizing = calculate_position_size(PositionSizingInput(
+        account_equity=item.equity_zar,
+        risk_percentage=item.risk_per_trade_pct * risk_multiplier,
+        entry_price=item.current_price,
+        stop_price=stop,
+        broker_minimum_size=item.min_deal_size,
+        broker_size_increment=item.size_increment,
+        value_per_point_account_currency=item.value_per_price_point_zar,
+        margin_factor_pct=item.margin_factor_pct,
+        available_margin=item.available_margin_zar,
+    ))
+    if not sizing.approved:
+        return RiskResult(False, sizing.rejection_reason or "POSITION_SIZING_REJECTED")
     take_profit = item.current_price + sign * stop_distance * item.min_reward_risk_ratio
-    return RiskResult(True, "SHADOW_RISK_APPROVED", planned_risk, size, stop, take_profit)
+    return RiskResult(True, "SHADOW_RISK_APPROVED", sizing.estimated_stop_loss,
+                      sizing.broker_rounded_size, stop, take_profit)
 
 
 def _artifact(path: str, digest: str) -> dict[str, object]:
@@ -183,11 +188,8 @@ def _signal(frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: fl
         lookup = {int(value): index for index, value in enumerate(model.classes_)}
         confidence = float(probabilities[0, lookup[class_value]]) if class_value in lookup else 0.0
         return direction, Decimal(str(confidence)), Decimal(str(row.iloc[0]["atr"]))
-    featured = add_features(frame, horizon=int(bundle.get("horizon") or 4), labelled=False)
-    if featured.empty:
-        raise ValueError("INSUFFICIENT_FEATURE_ROWS")
-    row = featured.iloc[-1]
-    probability = float(bundle["model"].predict_proba(row[FEATURES].to_frame().T)[0, 1])
+    row = inference_feature_vector(frame, horizon=int(bundle.get("horizon") or 4))
+    probability = float(bundle["model"].predict_proba(row.to_frame().T)[0, 1])
     if not math.isfinite(probability):
         raise ValueError("NON_FINITE_MODEL_OUTPUT")
     direction = "BUY" if probability >= buy else "SELL" if probability <= sell else "HOLD"
@@ -216,12 +218,14 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
 
         cursor.execute(
             """SELECT m.market_id,m.symbol,sv.strategy_version_id,sv.buy_threshold,sv.sell_threshold,
-                      mv.model_version_id,mv.artifact_path,mv.artifact_sha256,mv.status
+                      mv.model_version_id,mv.artifact_path,mv.artifact_sha256,mv.status,
+                      mv.registered_at_utc,mv.feature_version
                FROM app.markets m
                JOIN app.model_versions mv ON mv.market_id=m.market_id
                JOIN app.strategy_versions sv ON sv.strategy_version_id=mv.strategy_version_id
                JOIN app.strategies s ON s.strategy_id=sv.strategy_id
-               WHERE m.enabled=1 AND mv.status IN ('VALIDATED','REGISTERED')
+               WHERE m.enabled=1 AND m.signal_enabled=1 AND m.demo_trading_enabled=1
+                 AND mv.status IN ('VALIDATED','REGISTERED')
                  AND s.tenant_id=%s AND s.status='ACTIVE' AND s.environment='DEMO'
                  AND mv.registered_at_utc=(SELECT MAX(x.registered_at_utc) FROM app.model_versions x
                                           WHERE x.market_id=m.market_id
@@ -260,8 +264,9 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                                  "direction": combined_decision["decision"]})
                 continue
             try:
+                bundle = _artifact(str(model["artifact_path"]), str(model["artifact_sha256"]))
                 model_direction, _, atr = _signal(
-                    frame, _artifact(str(model["artifact_path"]), str(model["artifact_sha256"])),
+                    frame, bundle,
                     float(model["buy_threshold"]), float(model["sell_threshold"]),
                 )
             except ValueError as exc:
@@ -288,6 +293,29 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                  confidence, atr, key, str(combined_decision["market_decision_id"])),
             )
             result = _risk_from_database(cursor, tenant_id, account, model, candle, direction, confidence, atr)
+            signal_time = candle["open_time_utc"].replace(tzinfo=timezone.utc)
+            freeze_time = model["registered_at_utc"].replace(tzinfo=timezone.utc)
+            feature_version = str(model.get("feature_version") or bundle.get("feature_version") or "UNKNOWN")
+            vector_hash = feature_vector_hash(inference_feature_vector(
+                frame, horizon=int(bundle.get("horizon") or 4)))
+            shadow_entry = Decimal(str(candle["ask_close"] if direction == "BUY" and candle["ask_close"] is not None
+                                       else candle["bid_close"] if direction == "SELL" and candle["bid_close"] is not None
+                                       else candle["close"]))
+            risk_pct = Decimal(str(result.get("risk_percentage") or 0))
+            value_per_point = Decimal(str(result.get("value_per_price_point_zar") or 0))
+            record_shadow_candidate(
+                cursor, tenant_id=tenant_id, market_id=market_id, signal_id=signal_id,
+                model_version_id=str(model["model_version_id"]), candle_id=int(candle["candle_id"]),
+                direction=direction, approved=result["risk"].approved, reason=result["risk"].reason,
+                feature_hash=vector_hash, feature_version=feature_version,
+                freeze_timestamp=freeze_time, signal_timestamp=signal_time,
+                equity=Decimal(str(result.get("equity") or 0)), risk_pct=risk_pct,
+                entry=shadow_entry, stop=result["risk"].stop or shadow_entry,
+                target=result["risk"].take_profit or shadow_entry,
+                planned_risk=result["risk"].planned_risk_zar or Decimal("0"),
+                size=result["risk"].size or Decimal("0"),
+                value_per_point=value_per_point,
+            )
             decision_id = str(uuid.uuid4())
             cursor.execute(
                 """INSERT app.risk_decisions(risk_decision_id,signal_id,risk_version_id,decision,reason_code,
@@ -323,9 +351,6 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                     event_type="SHADOW_SUBMISSION_SIMULATED", correlation_id=correlation_id,
                     details={"broker_submission": False},
                 )
-                shadow_entry = Decimal(str(candle["ask_close"] if direction == "BUY" and candle["ask_close"] is not None
-                                           else candle["bid_close"] if direction == "SELL" and candle["bid_close"] is not None
-                                           else candle["close"]))
                 open_shadow_trade(
                     cursor, tenant_id=tenant_id, intent_id=intent_id, market_id=market_id,
                     direction=direction, size=result["risk"].size,
@@ -336,6 +361,10 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                     cost_bps=Decimal(str(settings.model_round_trip_cost_bps)),
                     bid=Decimal(str(candle["bid_close"])) if candle["bid_close"] is not None else None,
                     ask=Decimal(str(candle["ask_close"])) if candle["ask_close"] is not None else None,
+                    feature_vector_hash=vector_hash,
+                    feature_version=feature_version,
+                    model_version_id=str(model["model_version_id"]),
+                    model_freeze_timestamp=freeze_time,
                 )
             connection.commit()
             outcomes.append({"symbol": symbol, "result": "WOULD_SUBMIT" if result["risk"].approved else "REJECTED",
@@ -420,4 +449,5 @@ def _risk_from_database(cursor: object, tenant_id: str, account: dict[str, objec
         Decimal(str(rule["margin_factor_pct"])) if rule.get("margin_factor_pct") else None,
     ))
     return {"risk": risk, "risk_version_id": str(policy["risk_version_id"]), "equity": equity,
+            "risk_percentage": Decimal(str(policy["risk_per_trade_pct"])),
             "value_per_price_point_zar": Decimal(str(rule["value_per_price_point_zar"]))}

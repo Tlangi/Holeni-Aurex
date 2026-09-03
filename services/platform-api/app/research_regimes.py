@@ -24,15 +24,19 @@ def market_session(symbol: str, opened: datetime) -> str:
         if local < time(17, 30):
             return "CLOSING"
         return "CLOSED"
-    utc = moment.astimezone(timezone.utc).time()
-    if time(0) <= utc < time(7):
-        return "ASIA"
-    if time(7) <= utc < time(12):
-        return "LONDON"
-    if time(12) <= utc < time(16):
+    london = moment.astimezone(ZoneInfo("Europe/London")).time()
+    new_york = moment.astimezone(ZoneInfo("America/New_York")).time()
+    tokyo = moment.astimezone(ZoneInfo("Asia/Tokyo")).time()
+    london_open = time(8) <= london < time(17)
+    new_york_open = time(8) <= new_york < time(17)
+    if london_open and new_york_open:
         return "LONDON_NEW_YORK_OVERLAP"
-    if time(16) <= utc < time(21):
+    if london_open:
+        return "LONDON"
+    if new_york_open:
         return "NEW_YORK"
+    if time(9) <= tokyo < time(18):
+        return "ASIA"
     return "OFF_HOURS"
 
 

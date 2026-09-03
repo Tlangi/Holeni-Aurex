@@ -49,17 +49,20 @@ class Response:
 
 
 class Session:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail, self.posts = fail, 0
+    def __init__(self, *, fail: bool = False, post_status: int = 200,
+                 get_status: int = 200) -> None:
+        self.fail, self.posts, self.gets = fail, 0, 0
+        self.post_status, self.get_status = post_status, get_status
 
     def post(self, *args: object, **kwargs: object) -> Response:
         self.posts += 1
         if self.fail:
             raise requests.Timeout("unknown")
-        return Response(200, {"dealReference": "REF-1"})
+        return Response(self.post_status, {"dealReference": "REF-1", "errorCode": "REJECTED"})
 
     def get(self, *args: object, **kwargs: object) -> Response:
-        return Response(200, {"dealReference": "REF-1", "dealId": "DEAL-1",
+        self.gets += 1
+        return Response(self.get_status, {"dealReference": "REF-1", "dealId": "DEAL-1",
                               "dealStatus": "ACCEPTED", "status": "OPEN", "level": 1.15})
 
 
@@ -89,6 +92,30 @@ def test_submission_timeout_is_unknown_and_is_not_retried() -> None:
     session = Session(fail=True)
     with pytest.raises(IGSubmissionUnknown):
         adapter(session).submit(order(), gate())
+    assert session.posts == 1
+
+
+def test_broker_rejection_is_one_post_and_never_retried() -> None:
+    from app.ig_execution import IGExecutionRejected
+    session = Session(post_status=400)
+    with pytest.raises(IGExecutionRejected):
+        adapter(session).submit(order(), gate())
+    assert session.posts == 1
+
+
+def test_confirmation_unavailable_is_bounded_and_requires_reconciliation() -> None:
+    session = Session(get_status=404)
+    with pytest.raises(IGSubmissionUnknown, match="reconciliation"):
+        adapter(session).confirm("REF-1", attempts=3)
+    assert session.gets == 3
+
+
+def test_acceptance_followed_by_local_crash_does_not_authorize_a_retry() -> None:
+    session = Session()
+    acknowledgement = adapter(session).submit(order(), gate())
+    assert acknowledgement.deal_reference == "REF-1"
+    # A crash here leaves reconciliation as the only safe continuation; the
+    # adapter performed exactly one POST and exposes no automatic retry path.
     assert session.posts == 1
 
 

@@ -38,7 +38,12 @@ def _frame(rows: int = 800) -> pd.DataFrame:
 
 def test_market_target_catalog_is_versioned_market_specific_and_ternary() -> None:
     catalog = target_catalog()
-    assert set(catalog) == {"EURUSD", "GBPUSD", "USDJPY", "GERMANY40"}
+    assert set(catalog) == {
+        "EURUSD", "GBPUSD", "USDJPY", "GERMANY40",
+        "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR",
+    }
+    assert catalog["XAUUSD"][0]["minimum_edge_bps"] > catalog["EURUSD"][0]["minimum_edge_bps"]
+    assert catalog["USDZAR"][0]["safety_buffer_bps"] > catalog["GBPJPY"][0]["safety_buffer_bps"]
     assert len({spec.horizon_bars for specs in TARGET_CATALOG.values() for spec in specs}) > 1
     assert all(item["sha256"] for specs in catalog.values() for item in specs)
     germany = build_selective_target(_frame(), TARGET_CATALOG["GERMANY40"][0], configured_cost_bps=1.0)

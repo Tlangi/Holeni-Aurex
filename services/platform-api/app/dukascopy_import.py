@@ -20,9 +20,14 @@ INSTRUMENTS = {
     "gbpusd": "GBPUSD",
     "usdjpy": "USDJPY",
     "deuidxeur": "GERMANY40",
+    "gbpjpy": "GBPJPY",
+    "eurjpy": "EURJPY",
+    "xauusd": "XAUUSD",
+    "audjpy": "AUDJPY",
+    "usdzar": "USDZAR",
 }
 FILE_PATTERN = re.compile(
-    r"^(?P<instrument>eurusd|gbpusd|usdjpy|deuidxeur)-m5-(?P<side>bid)-.+\.csv$",
+    r"^(?P<instrument>eurusd|gbpusd|usdjpy|deuidxeur|gbpjpy|eurjpy|xauusd|audjpy|usdzar)-m5-(?P<side>bid)-.+\.csv$",
     re.IGNORECASE,
 )
 

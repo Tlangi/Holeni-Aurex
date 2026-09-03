@@ -67,7 +67,7 @@ class IGMarketStream:
             cursor.execute(
                 """SELECT market_id,symbol,ig_epic,calendar_code,market_timezone,
                           session_open_local,session_close_local
-                   FROM app.markets WHERE enabled=1"""
+                   FROM app.markets WHERE enabled=1 AND research_enabled=1"""
             )
             self.markets = {
                 str(row[2]): {

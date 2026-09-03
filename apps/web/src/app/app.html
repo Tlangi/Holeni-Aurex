@@ -10,7 +10,7 @@
         <section class="nav-section">
           <p class="nav-label">{{ section.group }}</p>
           @for (item of section.items; track item.label) {
-            <a class="nav-item" [class.active]="item.active" [attr.href]="'#' + item.target">
+            <a class="nav-item" [class.active]="item.active" [attr.href]="'#' + item.target" (click)="navigateTo(item.target, $event)">
               <span class="nav-icon" [attr.data-icon]="item.icon" aria-hidden="true"></span>
               <span>{{ item.label }}</span>
             </a>
@@ -34,6 +34,7 @@
       <div class="workspace-title"><strong>Aurex operations</strong><span>IG demo · South Africa</span></div>
       <div class="topbar-actions">
         <a class="secondary-button control-button" href="/research">Research</a>
+        <a class="secondary-button control-button" href="/experimental-lab">Experimental Lab</a>
         <div class="trading-status" [class.disabled]="tradingReadiness()?.status !== 'READY'">
           <span class="status-dot"></span><span>Execution</span>
           <strong>{{ tradingStatus()?.mode ?? 'UNKNOWN' }}</strong>
@@ -58,7 +59,13 @@
         <button class="secondary-button" type="button" [disabled]="loading()" (click)="refreshData()"><span class="refresh-icon" [class.spinning]="loading()"></span>{{ loading() ? 'Synchronising…' : 'Refresh IG data' }}</button>
       </section>
 
-      <section class="panel validation-panel" id="model-validation">
+      <nav class="dashboard-tabs" aria-label="Dashboard sections">
+        @for (tab of dashboardTabs; track tab[0]) {
+          <button type="button" [class.active]="dashboardTab() === tab[0]" (click)="selectDashboardTab(tab[0])">{{ tab[1] }}</button>
+        }
+      </nav>
+
+      <section class="panel validation-panel" id="model-validation" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Enhanced validation evidence</h2><p>Walk-forward, transaction-cost and baseline gates. No evidence is inferred from a model file.</p></div></div>
         <div class="validation-grid">
           @for (model of modelValidation()?.models ?? []; track model.market) {
@@ -98,7 +105,7 @@
         <div class="sync-alert" role="alert"><strong>Session control unavailable</strong><span>{{ logoutError() }}</span></div>
       }
 
-      <section class="portfolio-hero" aria-label="Portfolio overview">
+      <section class="portfolio-hero" aria-label="Portfolio overview" [hidden]="dashboardTab() !== 'overview'">
         <div>
           <div class="section-label"><span>Portfolio value</span><span class="info-icon">i</span></div>
           <div class="hero-value">{{ money(dashboardData()?.portfolio?.equity) }}</div>
@@ -117,7 +124,7 @@
         </div>
       </section>
 
-      <section class="metric-grid" aria-label="Key account metrics">
+      <section class="metric-grid" aria-label="Key account metrics" [hidden]="dashboardTab() !== 'overview'">
         @for (metric of metrics(); track metric.label) {
           <article class="metric-card">
             <div class="metric-header"><span>{{ metric.label }}</span></div>
@@ -133,7 +140,7 @@
         </article>
       </section>
 
-      <section class="panel model-readiness-panel" id="model-readiness">
+      <section class="panel model-readiness-panel" id="model-readiness" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Model readiness</h2><p>Evidence is evaluated independently for each market. An artifact alone is never sufficient.</p></div><span class="record-count">{{ modelReadiness()?.required_feature_rows ?? 2000 }} rows required</span></div>
         <div class="model-readiness-grid">
           @for (market of modelReadiness()?.markets ?? []; track market.symbol) {
@@ -161,7 +168,7 @@
         </div>
       </section>
 
-      <section class="panel model-readiness-panel" id="forward-evidence">
+      <section class="panel model-readiness-panel" id="forward-evidence" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Forward evidence</h2><p>Immutable observations captured from completed M15 candles. Accumulation never overrides validation or risk gates.</p></div><span class="record-count">{{ forwardEvidence()?.snapshots?.length ?? 0 }} observations</span></div>
         <div class="model-readiness-grid">
           @for (market of forwardEvidence()?.latest ?? []; track market.symbol) {
@@ -188,8 +195,8 @@
         </div>
       </section>
 
-      <section class="panel replay-panel" id="replay-laboratory">
-        <div class="panel-header replay-header"><div><h2>Unified replay laboratory</h2><p>Shared features, sizing, bid/ask costs and conservative lifecycle fills. No broker connection.</p></div><button class="secondary-button" type="button" [disabled]="replayBusy()" (click)="runDiagnosticReplay()">{{ replayBusy() ? 'Running…' : 'Replay ' + selectedMarket() }}</button></div>
+      <section class="panel replay-panel" id="replay-laboratory" [hidden]="dashboardTab() !== 'research'">
+        <div class="panel-header replay-header"><div><h2>Diagnostic hypothetical trades</h2><p>Shared features, sizing, bid/ask costs and conservative lifecycle fills. No broker connection.</p></div><button class="secondary-button" type="button" [disabled]="replayBusy()" (click)="runDiagnosticReplay()">{{ replayBusy() ? 'Running…' : 'Replay ' + selectedMarket() }}</button></div>
         @if (replayMessage()) { <div class="testing-message"><span class="status-dot"></span>{{ replayMessage() }}</div> }
         <div class="replay-grid">
           @for (run of replayRuns()?.runs ?? []; track run.replay_run_id) {
@@ -198,7 +205,7 @@
         </div>
       </section>
 
-      <section class="panel macro-panel" id="macro-intelligence">
+      <section class="panel macro-panel" id="macro-intelligence" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header macro-header">
           <div><h2>Macro intelligence</h2><p>Audited official-source evidence combined with technical and validated-model signals</p></div>
           <div class="macro-actions"><span class="record-count">{{ macroStatus()?.status ?? 'UNAVAILABLE' }}</span><button class="secondary-button" type="button" [disabled]="macroBusy()" (click)="refreshMacroIntelligence()">{{ macroBusy() ? 'Synchronising…' : 'Refresh official sources' }}</button></div>
@@ -235,7 +242,7 @@
         <p class="macro-authority">Final authority: {{ macroStatus()?.execution_authority ?? 'DETERMINISTIC_RISK_ENGINE' }}. Macro intelligence cannot submit an order.</p>
       </section>
 
-      <section class="panel market-panel" id="market-data">
+      <section class="panel market-panel" id="market-data" [hidden]="dashboardTab() !== 'markets'">
         <div class="panel-header market-header">
           <div><h2>Live market structure</h2><p>Completed IG Lightstreamer candles · persisted across trading days · South African time</p></div>
           <div class="market-controls">
@@ -246,7 +253,7 @@
             </button>
             <div class="range-selector" aria-label="Market">
               @for (market of marketInventory()?.markets ?? []; track market.symbol) {
-                <button type="button" [class.active]="selectedMarket() === market.symbol" (click)="selectMarket(market.symbol)">{{ market.display_name }}</button>
+                <button type="button" [class.active]="selectedMarket() === market.symbol" (click)="selectMarket(market.symbol)">{{ market.display_name }} <small>T{{ market.tier }}</small></button>
               }
             </div>
             <div class="range-selector" aria-label="Timeframe">
@@ -314,7 +321,7 @@
         }
       </section>
 
-      <section class="dashboard-grid">
+      <section class="dashboard-grid" [hidden]="dashboardTab() !== 'overview'">
         <article class="panel performance-panel">
           <div class="panel-header">
             <div><h2>Portfolio performance</h2><p>Account equity over time</p></div>
@@ -358,7 +365,7 @@
         </article>
       </section>
 
-      <section class="panel model-readiness-panel" id="operational-assurance">
+      <section class="panel model-readiness-panel" id="operational-assurance" [hidden]="dashboardTab() !== 'operations'">
         <div class="panel-header"><div><h2>Operational assurance</h2><p>Audited delivery, recovery and platform-health evidence</p></div><span class="record-count">{{ operationsStatus()?.status ?? 'UNAVAILABLE' }}</span></div>
         <div class="model-readiness-grid assurance-grid">
           <article class="model-card">
@@ -396,7 +403,7 @@
         </div>
       </section>
 
-      <section class="panel positions-panel" id="open-positions">
+      <section class="panel positions-panel" id="open-positions" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Open positions</h2><p>{{ dashboardData()?.open_positions ?? 0 }} positions reported by IG demo</p></div></div>
         <div class="position-table" role="table" aria-label="Open positions">
           <div class="table-row table-head" role="row"><span>Market</span><span>Direction</span><span>Entry</span><span>Current</span><span>Unrealised P/L</span><span>Status</span></div>
@@ -414,7 +421,7 @@
         </div>
       </section>
 
-      <section class="panel trade-history-panel" id="strategies">
+      <section class="panel trade-history-panel" id="strategies" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Strategies</h2><p>Versioned demo strategies and model-validation coverage</p></div></div>
         <div class="history-table" role="table" aria-label="Strategies">
           <div class="strategy-row history-head" role="row"><span>Strategy</span><span>Version</span><span>Timeframe</span><span>Buy</span><span>Sell</span><span>Models</span><span>Status</span><span>Control</span></div>
@@ -431,7 +438,7 @@
         </div>
       </section>
 
-      <section class="panel trade-history-panel" id="orders">
+      <section class="panel trade-history-panel" id="orders" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Order intents</h2><p>Persistent risk-approved decisions and shadow outcomes</p></div><span class="record-count">{{ orderIntents()?.count ?? 0 }} records</span></div>
         <div class="history-table" role="table" aria-label="Order intents">
           <div class="history-row history-head" role="row"><span>Market</span><span>Side</span><span>Size</span><span>Risk</span><span>Stop</span><span>Target</span><span>Created</span><span>Status</span></div>
@@ -448,7 +455,7 @@
         </div>
       </section>
 
-      <section class="panel trade-history-panel" id="shadow-trades">
+      <section class="panel trade-history-panel" id="shadow-trades" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Hypothetical shadow trades</h2><p>Cost-aware simulated entries and exits. These records are never sent to IG.</p></div><span class="record-count">{{ shadowTrades()?.count ?? 0 }} SHADOW</span></div>
         <div class="history-table" role="table" aria-label="Hypothetical shadow trades">
           <div class="history-row shadow-row history-head" role="row"><span>Market</span><span>Side</span><span>Entry</span><span>Current/exit</span><span>Stop</span><span>Target</span><span>P/L ZAR</span><span>Status</span></div>
@@ -466,7 +473,17 @@
         </div>
       </section>
 
-      <section class="dashboard-grid operational-grid">
+      <section class="panel" [hidden]="dashboardTab() !== 'trading'">
+        <div class="panel-header"><div><h2>Daily shadow evidence</h2><p>Includes zero-trade days and rejected candidates; never drives a profit quota.</p></div><span class="record-count">{{ shadowPerformance()?.days ?? 30 }} DAYS</span></div>
+        <div class="history-table" role="table" aria-label="Daily shadow performance">
+          <div class="history-row history-head" role="row"><span>Date</span><span>Market</span><span>Candidates</span><span>Rejected</span><span>Opened</span><span>Closed</span><span>Net P/L</span><span>Avg R</span></div>
+          @for (day of shadowPerformance()?.daily ?? []; track day.evidence_date + day.symbol) {
+            <div class="history-row" role="row"><span>{{ day.evidence_date }}</span><strong>{{ day.symbol }}</strong><span>{{ day.candidate_count }}</span><span>{{ day.rejected_count }}</span><span>{{ day.opened_count }}</span><span>{{ day.closed_count }}</span><strong>{{ money(day.net_pnl) }}</strong><span>{{ day.average_net_r ?? '—' }}</span></div>
+          } @empty { <div class="history-empty"><strong>No shadow evidence loaded</strong><span>Zero trades is a valid outcome.</span></div> }
+        </div>
+      </section>
+
+      <section class="dashboard-grid operational-grid" [hidden]="dashboardTab() !== 'operations'">
         <article class="panel status-panel" id="risk-management">
           <div class="panel-header"><div><h2>Daily risk ledger</h2><p>South African trading-day controls</p></div><span class="record-count">{{ riskStatus()?.status ?? 'UNKNOWN' }}</span></div>
           <div class="risk-facts">
@@ -491,7 +508,7 @@
         </article>
       </section>
 
-      <section class="panel trade-history-panel" id="trade-history">
+      <section class="panel trade-history-panel" id="trade-history" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Trade history</h2><p>Closed and reconciled IG demo positions</p></div><span class="record-count">{{ tradeHistory()?.count ?? 0 }} records</span></div>
         <div class="history-table" role="table" aria-label="Trade history">
           <div class="history-row history-head" role="row"><span>Market</span><span>Side</span><span>Size</span><span>Entry</span><span>Exit</span><span>Last P/L</span><span>Closed</span><span>Status</span></div>

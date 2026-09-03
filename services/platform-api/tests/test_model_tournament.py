@@ -5,7 +5,16 @@ import pandas as pd
 
 from app.config import Settings
 from app.model_pipeline import chronological_evaluate
-from app.model_tournament import Challenger, ModelTournamentRequest, challengers, run_selective_tournament, run_tournament
+from app.model_tournament import (Challenger, ModelTournamentRequest, challengers,
+                                  run_selective_tournament, run_tournament,
+                                  selective_challengers)
+
+
+def test_selective_native_boosters_use_ternary_objectives() -> None:
+    candidates = {item.key: item for item in selective_challengers(1)}
+    assert candidates["LIGHTGBM"].factory().get_params()["objective"] == "multiclass"
+    assert candidates["XGBOOST"].factory().get_params()["objective"] == "multi:softprob"
+    assert candidates["CATBOOST"].factory().get_params()["loss_function"] == "MultiClass"
 
 
 def _frame(rows: int = 2300) -> pd.DataFrame:

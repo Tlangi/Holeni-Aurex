@@ -40,6 +40,9 @@ class AccountSyncScheduler:
                 await asyncio.to_thread(
                     sync_ig_demo, self.settings, correlation_id=correlation_id
                 )
+                if self.settings.experimental_demo_configured:
+                    from app.experimental_demo import enforce_experimental_max_holding
+                    await asyncio.to_thread(enforce_experimental_max_holding, self.settings)
                 failures = 0
             except SyncAlreadyRunning:
                 logger.info(

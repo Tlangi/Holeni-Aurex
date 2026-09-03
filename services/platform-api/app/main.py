@@ -5,6 +5,7 @@ from typing import AsyncIterator
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -20,6 +21,23 @@ from app.forward_evidence import read_forward_evidence
 from app.forward_promotion import read_forward_shadow_promotions
 from app.demo_execution import (
     OneOffDemoExecutionRequest, execute_one_off_demo, read_demo_execution_attempts,
+)
+from app.experimental_demo import (
+    CreateExperimentalProgrammeRequest,
+    ExperimentalCloseRequest,
+    ExperimentalControlRequest,
+    ExperimentalDemoBlocked,
+    ExperimentalReconcileRequest,
+    ExperimentalSignalRequest,
+    ExperimentalSubmitRequest,
+    control_experimental_programme,
+    close_experimental_position,
+    create_experimental_programme,
+    read_experimental_lab,
+    reconcile_experimental_demo,
+    record_experimental_signal,
+    startup_recover_experimental_demo,
+    submit_experimental_attempt,
 )
 from app.ig_execution import IGExecutionBlocked, IGExecutionRejected, IGSubmissionUnknown
 from app.ig_demo import IGDemoClient, IGDemoUnavailable
@@ -46,8 +64,10 @@ from app.observability import CorrelationLoggingMiddleware, configure_logging
 from app.operations_status import read_operational_assurance
 from app.scheduler import AccountSyncScheduler
 from app.trading_status import read_trading_status
+from app.shadow_performance import read_daily_shadow_performance
 from app.markets import read_candles, read_market_inventory
 from app.market_data_operations import read_market_data_operations
+from app.market_qualification import qualify_markets
 from app.market_intelligence import model_readiness
 from app.model_monitoring import read_model_monitoring
 from app.macro_intelligence import generate_market_decisions, read_macro_status, sync_official_macro_sources
@@ -76,6 +96,23 @@ logger = logging.getLogger("aurex.research")
 _research_evidence_refresh_lock = Lock()
 
 
+class SameOriginMutationMiddleware:
+    """Reject browser cross-origin mutations; non-browser workers have no Origin header."""
+    def __init__(self, app: object, allowed_origins: list[str]) -> None:
+        self.app, self.allowed = app, frozenset(allowed_origins)
+
+    async def __call__(self, scope: dict, receive: object, send: object) -> None:
+        if scope.get("type") == "http" and scope.get("method") in {"POST", "PUT", "PATCH", "DELETE"}:
+            headers = {key.decode("latin1").lower(): value.decode("latin1")
+                       for key, value in scope.get("headers", [])}
+            origin = headers.get("origin")
+            if origin and origin not in self.allowed:
+                response = JSONResponse({"status": "forbidden", "message": "Cross-origin mutation rejected"}, 403)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def _refresh_research_evidence() -> None:
     try:
         sync_quality_evidence(settings)
@@ -90,6 +127,10 @@ def _refresh_research_evidence() -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     scheduler = AccountSyncScheduler(settings)
     if operational_schema_ready(settings):
+        try:
+            startup_recover_experimental_demo(settings)
+        except Exception:
+            logger.exception("Experimental Demo startup reconciliation failed; submissions remain fail-closed")
         scheduler.start()
     try:
         yield
@@ -110,8 +151,10 @@ app.add_middleware(
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Correlation-ID", "X-Aurex-CSRF"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+app.add_middleware(SameOriginMutationMiddleware, allowed_origins=settings.allowed_origins)
 app.add_middleware(CorrelationLoggingMiddleware)
 
 
@@ -406,6 +449,14 @@ def shadow_trades(limit: int = 50, user: AuthenticatedUser = Depends(require_use
     return JSONResponse(content=read_shadow_trades(settings, user.tenant_id, limit=limit))
 
 
+@app.get("/api/v1/shadow/performance/daily", tags=["trading"])
+def shadow_daily_performance(
+    days: int = 30, user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    return JSONResponse(content=jsonable_encoder(
+        read_daily_shadow_performance(settings, user.tenant_id, days)))
+
+
 @app.get("/api/v1/forward-shadow/promotion", tags=["trading"])
 def forward_shadow_promotion(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     return JSONResponse(content=read_forward_shadow_promotions(settings, user.tenant_id))
@@ -447,6 +498,132 @@ def one_off_demo_execution(
 def forward_evidence(limit: int = 200, user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     """Read immutable forward observations. This route cannot enable or submit orders."""
     return JSONResponse(content=read_forward_evidence(settings, user.tenant_id, limit=limit))
+
+
+@app.get("/api/v1/experimental-demo", tags=["experimental-demo"])
+def experimental_demo_lab(
+    limit: int = 100, user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=jsonable_encoder(read_experimental_lab(settings, user, limit)))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+
+
+@app.post("/api/v1/experimental-demo/programmes", tags=["experimental-demo"])
+def experimental_demo_create(
+    body: CreateExperimentalProgrammeRequest, request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=jsonable_encoder(create_experimental_programme(
+            settings, user, body, correlation_id=getattr(request.state, "correlation_id", None),
+        )), status_code=201)
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except ExperimentalDemoBlocked as exc:
+        return JSONResponse(content={"status": "blocked", "reason_code": exc.reason_code,
+                                     "message": str(exc)}, status_code=409)
+
+
+@app.post("/api/v1/experimental-demo/programmes/{programme_id}/control", tags=["experimental-demo"])
+def experimental_demo_control(
+    programme_id: str, body: ExperimentalControlRequest, request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=jsonable_encoder(control_experimental_programme(
+            settings, user, programme_id, body,
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except LookupError as exc:
+        return JSONResponse(content={"status": "not_found", "message": str(exc)}, status_code=404)
+    except ExperimentalDemoBlocked as exc:
+        return JSONResponse(content={"status": "blocked", "reason_code": exc.reason_code,
+                                     "message": str(exc)}, status_code=409)
+
+
+@app.post("/api/v1/experimental-demo/programmes/{programme_id}/signals", tags=["experimental-demo"])
+def experimental_demo_signal(
+    programme_id: str, body: ExperimentalSignalRequest, request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=jsonable_encoder(record_experimental_signal(
+            settings, user, programme_id, body,
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )), status_code=201)
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except LookupError as exc:
+        return JSONResponse(content={"status": "not_found", "message": str(exc)}, status_code=404)
+    except ExperimentalDemoBlocked as exc:
+        return JSONResponse(content={"status": "blocked", "reason_code": exc.reason_code,
+                                     "message": str(exc)}, status_code=409)
+
+
+@app.post("/api/v1/experimental-demo/attempts/{attempt_id}/submit", tags=["experimental-demo"])
+def experimental_demo_submit(
+    attempt_id: str, body: ExperimentalSubmitRequest, request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    del body  # Pydantic has already enforced the deliberate acknowledgement.
+    try:
+        return JSONResponse(content=jsonable_encoder(submit_experimental_attempt(
+            settings, user, attempt_id,
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except LookupError as exc:
+        return JSONResponse(content={"status": "not_found", "message": str(exc)}, status_code=404)
+    except ExperimentalDemoBlocked as exc:
+        return JSONResponse(content={"status": "blocked", "reason_code": exc.reason_code,
+                                     "message": str(exc)}, status_code=409)
+    except IGSubmissionUnknown:
+        return JSONResponse(content={"status": "UNKNOWN_SUBMISSION",
+                                     "reason_code": "UNKNOWN_SUBMISSION_BLOCK"}, status_code=503)
+
+
+@app.post("/api/v1/experimental-demo/reconcile", tags=["experimental-demo"])
+def experimental_demo_reconcile(
+    body: ExperimentalReconcileRequest, request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    del body
+    try:
+        return JSONResponse(content=jsonable_encoder(reconcile_experimental_demo(
+            settings, user, recovery_type="MANUAL",
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except (IGDemoUnavailable, IGSubmissionUnknown) as exc:
+        return JSONResponse(content={"status": "blocked", "message": str(exc)}, status_code=503)
+
+
+@app.post("/api/v1/experimental-demo/attempts/{attempt_id}/close", tags=["experimental-demo"])
+def experimental_demo_close(
+    attempt_id: str, body: ExperimentalCloseRequest, request: Request,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    try:
+        return JSONResponse(content=jsonable_encoder(close_experimental_position(
+            settings, user, attempt_id, body,
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except LookupError as exc:
+        return JSONResponse(content={"status": "not_found", "message": str(exc)}, status_code=404)
+    except ExperimentalDemoBlocked as exc:
+        return JSONResponse(content={"status": "blocked", "reason_code": exc.reason_code,
+                                     "message": str(exc)}, status_code=409)
+    except IGSubmissionUnknown:
+        return JSONResponse(content={"status": "UNKNOWN_SUBMISSION",
+                                     "reason_code": "UNKNOWN_SUBMISSION_BLOCK"}, status_code=503)
 
 
 @app.post("/api/v1/trading/control", tags=["trading"])
@@ -499,6 +676,12 @@ def market_inventory(user: AuthenticatedUser = Depends(require_user)) -> JSONRes
 def market_data_operations(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     """Read quarantined provider rows and bounded recovery jobs."""
     return JSONResponse(content=jsonable_encoder(read_market_data_operations(settings)))
+
+
+@app.get("/api/v1/markets/qualification", tags=["markets"])
+def market_qualification(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Persist and return independent readiness dimensions; never enables execution."""
+    return JSONResponse(content=jsonable_encoder(qualify_markets(settings)))
 
 
 @app.get("/api/v1/markets/candles", tags=["markets"])
@@ -555,16 +738,6 @@ def orders(limit: int = 50, user: AuthenticatedUser = Depends(require_user)) -> 
         return JSONResponse(content={"status": "unavailable"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
-@app.get("/api/v1/markets", tags=["markets"])
-def market_inventory(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
-    try:
-        return JSONResponse(content=read_market_inventory(settings, user.tenant_id))
-    except PermissionError as exc:
-        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
-    except DatabaseUnavailable:
-        return JSONResponse(content={"status": "unavailable"}, status_code=503)
-
-
 @app.get("/api/v1/risk/status", tags=["trading"])
 def risk_status(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     try:
@@ -605,10 +778,19 @@ def ig_demo_status(user: AuthenticatedUser = Depends(require_user)) -> JSONRespo
         with IGDemoClient(settings) as client:
             account = client.account()
             positions = client.positions()
+            working_orders = client.working_orders()
             conversion = client.zar_rate(account.currency)
         return JSONResponse(
             content={
                 "status": "connected",
+                "configured": True,
+                "authentication_success": True,
+                "authentication_failed": False,
+                "last_successful_auth": "now",
+                "session_age_seconds": 0,
+                "account_sync_success": True,
+                "positions_sync_success": True,
+                "working_orders_sync_success": True,
                 "message": "IG demo connection is current",
                 "environment": "demo",
                 "account": {
@@ -616,6 +798,7 @@ def ig_demo_status(user: AuthenticatedUser = Depends(require_user)) -> JSONRespo
                     "name": account.account_name,
                     "currency": account.currency,
                     "open_positions": len(positions),
+                    "working_orders": len(working_orders),
                     "reporting_currency": "ZAR",
                     "conversion_source": conversion.source,
                     "conversion_observed_at_utc": conversion.observed_at_utc.isoformat(),
@@ -625,7 +808,9 @@ def ig_demo_status(user: AuthenticatedUser = Depends(require_user)) -> JSONRespo
         )
     except (IGDemoUnavailable, ValueError) as exc:
         return JSONResponse(
-            content={"status": "unavailable", "message": str(exc), "execution_enabled": False},
+            content={"status": "unavailable", "configured": settings.ig_configured,
+                     "authentication_success": False, "authentication_failed": True,
+                     "message": str(exc), "execution_enabled": False},
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 

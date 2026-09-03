@@ -1,6 +1,6 @@
 import { afterNextRender, Component, computed, ElementRef, inject, signal, ViewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, RiskStatusData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
+import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
 import { AuthApi } from './auth-api';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
@@ -30,6 +30,11 @@ export class DashboardComponent {
   @ViewChild('chartViewport') private chartViewport?: ElementRef<HTMLDivElement>;
 
   protected readonly sidebarOpen = signal(false);
+  protected readonly dashboardTab = signal<'overview' | 'research' | 'markets' | 'trading' | 'operations'>('overview');
+  protected readonly dashboardTabs = [
+    ['overview', 'Overview'], ['research', 'Models & evidence'], ['markets', 'Markets & charts'],
+    ['trading', 'Trading activity'], ['operations', 'Operations'],
+  ] as const;
   protected readonly dashboardData = signal<DashboardData | null>(null);
   protected readonly marketData = signal<MarketCandlesData | null>(null);
   protected readonly marketInventory = signal<MarketInventoryData | null>(null);
@@ -50,6 +55,7 @@ export class DashboardComponent {
   protected readonly macroBusy = signal(false);
   protected readonly macroError = signal('');
   protected readonly shadowTrades = signal<ShadowTradesData | null>(null);
+  protected readonly shadowPerformance = signal<ShadowPerformanceData | null>(null);
   protected readonly orderIntents = signal<OrderIntentsData | null>(null);
   protected readonly riskStatus = signal<RiskStatusData | null>(null);
   protected readonly reconciliation = signal<ReconciliationData | null>(null);
@@ -118,8 +124,10 @@ export class DashboardComponent {
       );
       return {
         market: instrument?.display_name ?? position.market,
-        instrumentType: instrument?.asset_class === 'INDEX' ? 'Index CFD' : 'Forex CFD',
-        marker: instrument?.asset_class === 'INDEX' ? '40' : instrument?.base_currency ?? 'FX',
+        instrumentType: instrument?.asset_class === 'INDEX' ? 'Index CFD'
+          : instrument?.asset_class === 'METAL' ? 'Metal CFD' : 'Forex CFD',
+        marker: instrument?.asset_class === 'INDEX' ? '40'
+          : instrument?.asset_class === 'METAL' ? 'AU' : instrument?.base_currency ?? 'FX',
         side: position.direction,
         entry: position.entry_price,
         current: position.current_price ?? '—',
@@ -231,6 +239,32 @@ export class DashboardComponent {
 
   protected toggleSidebar(): void {
     this.sidebarOpen.update((value) => !value);
+  }
+
+  protected selectDashboardTab(tab: 'overview' | 'research' | 'markets' | 'trading' | 'operations'): void {
+    this.dashboardTab.set(tab);
+    this.sidebarOpen.set(false);
+    requestAnimationFrame(() => {
+      const tabs = document.querySelector<HTMLElement>('.dashboard-tabs');
+      if (typeof tabs?.scrollIntoView === 'function') tabs.scrollIntoView({ behavior: 'smooth' });
+    });
+  }
+
+  protected navigateTo(target: string, event: Event): void {
+    event.preventDefault();
+    const tab = target === 'dashboard-top' ? 'overview'
+      : ['model-validation', 'model-readiness', 'forward-evidence', 'replay-laboratory', 'macro-intelligence'].includes(target) ? 'research'
+      : target === 'market-data' ? 'markets'
+      : ['open-positions', 'strategies', 'orders', 'shadow-trades', 'trade-history'].includes(target) ? 'trading'
+      : 'operations';
+    this.dashboardTab.set(tab);
+    this.sidebarOpen.set(false);
+    requestAnimationFrame(() => {
+      const element = document.getElementById(target);
+      if (typeof element?.scrollIntoView === 'function') {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
   }
 
   protected refreshData(): void {
@@ -517,6 +551,11 @@ export class DashboardComponent {
     this.dashboardApi.shadowTrades().subscribe({
       next: (data) => this.shadowTrades.set(data),
       error: () => this.shadowTrades.set({ count: 0, environment: 'SHADOW', trades: [] }),
+    });
+    this.dashboardApi.shadowPerformance().subscribe({
+      next: (data) => this.shadowPerformance.set(data),
+      error: () => this.shadowPerformance.set({ days: 30, zero_trade_days_included: true,
+        execution_enabled: false, daily: [] }),
     });
   }
 

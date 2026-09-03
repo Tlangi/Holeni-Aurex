@@ -19,7 +19,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--market", default="ALL",
-        choices=("ALL", "EURUSD", "GBPUSD", "USDJPY", "GERMANY40"),
+        choices=("ALL", "EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR"),
     )
     parser.add_argument("--max-candles", type=int, default=100000)
     parser.add_argument(
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     if not tenant:
         raise SystemExit("No tenant exists")
     markets = (
-        ("EURUSD", "GBPUSD", "USDJPY", "GERMANY40")
+        ("EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR")
         if arguments.market == "ALL" else (arguments.market,)
     )
     results = {}
@@ -61,4 +61,3 @@ if __name__ == "__main__":
         except Exception as error:  # continue so each market has an audited outcome
             results[market] = {"status": "FAILED", "error": str(error)}
     print(json.dumps(results, indent=2, default=str))
-

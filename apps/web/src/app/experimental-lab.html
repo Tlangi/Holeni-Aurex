@@ -1,0 +1,275 @@
+<main class="lab-shell">
+  <header class="lab-header">
+    <div>
+      <a routerLink="/" class="back-link">← Aurex operations</a>
+      <p>EXPERIMENTAL IG DEMO</p>
+      <h1>Experimental Lab</h1>
+      <span>BROKER EVIDENCE PROGRAMME · NOT MODEL APPROVAL · IG DEMO ONLY</span>
+    </div>
+    <div class="header-actions">
+      <button type="button" class="secondary" [disabled]="busy() !== ''" (click)="load()">
+        Run readiness check
+      </button>
+      <button type="button" class="secondary" [disabled]="busy() !== ''" (click)="reconcile()">
+        Run reconciliation
+      </button>
+    </div>
+  </header>
+
+  @if (message()) {
+    <div class="notice">{{ message() }}</div>
+  }
+  @if (data(); as lab) {
+    <section class="guardrail" [class.off]="!lab.configured">
+      <div>
+        <small>GLOBAL FEATURE FLAG</small
+        ><strong>{{ lab.global_feature_flag ? 'ENABLED' : 'DISABLED' }}</strong>
+      </div>
+      <div>
+        <small>ENVIRONMENT LOCK</small
+        ><strong>{{ lab.configured ? 'IG DEMO LOCKED' : 'FAIL-CLOSED' }}</strong>
+      </div>
+      <div>
+        <small>PROMOTION AUTHORITY</small><strong>{{ lab.promotion_authority }}</strong>
+      </div>
+      <div>
+        <small>OPERATIONAL READINESS</small><strong>{{ lab.readiness.status }}</strong>
+      </div>
+    </section>
+
+    <nav class="tabs" aria-label="Experimental programme sections">
+      <a href="#programme">Programme</a><a href="#readiness">Readiness</a
+      ><a href="#canary">Canary readiness</a><a href="#evidence">Evidence</a
+      ><a href="#tiers">Tier policy</a>
+    </nav>
+
+    <section class="panel" id="canary">
+      <div class="panel-title">
+        <div>
+          <h2>Canary readiness</h2>
+          <p>
+            Current IG Demo evidence · {{ lab.canary_readiness.execution_continuity_lookback_hours }}h
+            execution-continuity window · rejected models remain research candidates only.
+          </p>
+        </div>
+        @if (lab.canary_readiness.recommended; as recommended) {
+          <div class="recommendation">
+            <small>RECOMMENDED CANARY MARKET</small>
+            <strong>{{ recommended.symbol }}</strong>
+            <span>{{ recommended.minimum_size_risk_pct }}% minimum-size risk</span>
+          </div>
+        } @else {
+          <div class="recommendation blocked"><strong>NO ELIGIBLE MARKET</strong></div>
+        }
+      </div>
+      <div class="cards canary-cards">
+        @for (market of lab.canary_readiness.markets; track market.symbol) {
+          <article class="programme-card">
+            <div class="card-head">
+              <h3>{{ market.symbol }}</h3>
+              <span [class.pass]="market.eligible_without_global_flag">
+                {{ market.eligible_without_global_flag ? 'OPERATIONALLY READY' : 'BLOCKED' }}
+              </span>
+            </div>
+            <dl>
+              <div><dt>IG market / spread</dt><dd>{{ market.market_status }} · {{ market.spread_bps ?? '—' }} bps</dd></div>
+              <div><dt>Minimum size</dt><dd>{{ market.minimum_size }}</dd></div>
+              <div><dt>Minimum-size risk</dt><dd>R {{ market.minimum_size_risk_zar }} · {{ market.minimum_size_risk_pct ?? '—' }}%</dd></div>
+              <div><dt>Stop / target distance</dt><dd>{{ market.canary_stop_distance }} / {{ market.canary_target_distance }}</dd></div>
+              <div><dt>Current gaps</dt><dd>{{ market.unresolved_execution_gaps }}</dd></div>
+              <div><dt>Model artifact</dt><dd>{{ market.gates['model_artifact'] ? 'VALID' : 'INVALID' }}</dd></div>
+            </dl>
+            @if (market.blocker) { <p class="blocker">{{ market.blocker }}</p> }
+          </article>
+        }
+      </div>
+      @if (lab.canary_readiness.infrastructure_ready && !lab.global_feature_flag) {
+        <div class="notice">Infrastructure is ready, but the global flag remains deliberately disabled. No programme can be armed or submitted.</div>
+      }
+    </section>
+
+    <section class="panel" id="programme">
+      <div class="panel-title">
+        <div>
+          <h2>Owner-controlled programmes</h2>
+          <p>
+            Creation produces a draft only. Arming remains impossible while the global flag or any
+            safety gate fails.
+          </p>
+        </div>
+        <div class="create">
+          <select aria-label="Exact immutable model candidate" (change)="selectCandidate($event)">
+            @for (candidate of lab.candidates; track candidate.model_version_id) {
+              <option [value]="candidate.model_version_id">
+                {{ candidate.symbol }} · {{ candidate.version }} · {{ candidate.status }}
+              </option>
+            }</select
+          ><button
+            type="button"
+            [disabled]="busy() !== '' || !lab.candidates.length"
+            (click)="createCanary(lab)"
+          >
+            Create draft canary
+          </button>
+        </div>
+      </div>
+      <div class="cards">
+        @for (programme of lab.programmes; track programme.experimental_programme_id) {
+          <article class="programme-card">
+            <div class="card-head">
+              <div>
+                <small>Tier {{ programme.market_tier }} · {{ programme.programme_type }}</small>
+                <h3>{{ programme.symbol }}</h3>
+              </div>
+              <span>{{ programme.status }}</span>
+            </div>
+            <dl>
+              <div>
+                <dt>Model</dt>
+                <dd>{{ programme.model_version }} · {{ programme.model_status }}</dd>
+              </div>
+              <div>
+                <dt>Checksum</dt>
+                <dd class="mono">{{ programme.artifact_sha256 }}</dd>
+              </div>
+              <div>
+                <dt>Risk per trade / hard cap</dt>
+                <dd>
+                  {{ programme.risk_per_trade_pct }}% / {{ programme.hard_max_risk_per_trade_pct }}%
+                </dd>
+              </div>
+              <div>
+                <dt>Daily / programme loss</dt>
+                <dd>
+                  {{ programme.daily_loss_limit_pct }}% /
+                  {{ programme.programme_drawdown_limit_pct }}%
+                </dd>
+              </div>
+              <div>
+                <dt>Evidence</dt>
+                <dd>
+                  {{ programme.observation_count }} reconciled ·
+                  {{ programme.unknown_count }} unknown
+                </dd>
+              </div>
+              <div>
+                <dt>Expires</dt>
+                <dd>{{ programme.expires_at_utc }}</dd>
+              </div>
+            </dl>
+            <div class="actions">
+              <button
+                type="button"
+                [disabled]="busy() !== '' || !lab.canary_readiness.owner_arm_enabled"
+                (click)="control(programme.experimental_programme_id, 'ARM')"
+              >
+                Arm
+              </button>
+              <button type="button" (click)="control(programme.experimental_programme_id, 'PAUSE')">
+                Pause
+              </button>
+              <button
+                type="button"
+                (click)="control(programme.experimental_programme_id, 'RESUME')"
+              >
+                Resume
+              </button>
+              <button
+                type="button"
+                class="danger"
+                (click)="control(programme.experimental_programme_id, 'KILL')"
+              >
+                Stop programme
+              </button>
+            </div>
+          </article>
+        } @empty {
+          <div class="empty">NO EXPERIMENT ARMED. No programme records exist.</div>
+        }
+      </div>
+    </section>
+
+    <section class="panel" id="readiness">
+      <h2>Deterministic readiness gates</h2>
+      <div class="checks">
+        @for (check of lab.readiness.checks | keyvalue; track check.key) {
+          <div>
+            <span [class.pass]="check.value.ready">{{ check.value.status }}</span
+            ><strong>{{ check.key }}</strong>
+            <p>{{ check.value.detail }}</p>
+          </div>
+        }
+      </div>
+    </section>
+
+    <section class="panel" id="evidence">
+      <h2>Execution evidence</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Signal time</th>
+              <th>Decision</th>
+              <th>State</th>
+              <th>Reason</th>
+              <th>Risk ZAR</th>
+              <th>Fill</th>
+              <th>Net P/L</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (attempt of lab.attempts; track attempt.experimental_attempt_id) {
+              <tr>
+                <td>{{ attempt.signal_timestamp_utc }}</td>
+                <td>{{ attempt.decision_side }}</td>
+                <td>{{ attempt.decision_state }}</td>
+                <td>{{ attempt.reason_code }}</td>
+                <td>{{ attempt.calculated_risk_zar ?? '—' }}</td>
+                <td>{{ attempt.actual_fill ?? '—' }}</td>
+                <td>{{ attempt.net_pnl_zar ?? '—' }}</td>
+                <td>
+                  @if (attempt.decision_state === 'EVALUATED') {
+                    <button
+                      type="button"
+                      [disabled]="!lab.configured || busy() !== ''"
+                      (click)="submitAttempt(attempt.experimental_attempt_id)"
+                    >
+                      Submit once
+                    </button>
+                  } @else if (attempt.decision_state === 'CONFIRMED_OPEN') {
+                    <button
+                      type="button"
+                      class="danger"
+                      [disabled]="busy() !== ''"
+                      (click)="closePosition(attempt.experimental_attempt_id)"
+                    >
+                      Close position
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="tiers">
+      <h2>Tier execution policy</h2>
+      <div class="tier-grid">
+        @for (market of lab.tier_matrix; track market.symbol) {
+          <div>
+            <strong>{{ market.symbol }}</strong
+            ><span>Tier {{ market.market_tier }}</span>
+            <p>{{ market.experimental_eligibility }}</p>
+            @if (market.market_tier === 3) {
+              <b>RESEARCH ONLY — TIER PROMOTION REQUIRED</b>
+            }
+          </div>
+        }
+      </div>
+    </section>
+  } @else {
+    <div class="empty">Loading Experimental Lab…</div>
+  }
+</main>

@@ -25,7 +25,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("action", choices=("status", "freeze", "evaluate"))
     parser.add_argument("--market", default="GERMANY40",
-                        choices=("EURUSD", "GBPUSD", "USDJPY", "GERMANY40"))
+                        choices=("EURUSD", "GBPUSD", "USDJPY", "GERMANY40", "GBPJPY", "EURJPY", "XAUUSD", "AUDJPY", "USDZAR"))
     parser.add_argument("--candidate-id")
     parser.add_argument("--holdout-fraction", type=float)
     arguments = parser.parse_args()

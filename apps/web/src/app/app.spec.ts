@@ -23,8 +23,8 @@ class DashboardApiMock {
   candles = vi.fn(() => of({ candles: [] }));
   marketInventory = vi.fn(() => of({
     markets: [
-      { symbol: 'EURUSD', display_name: 'EUR/USD', asset_class: 'FX', ig_epic: 'EUR', base_currency: 'EUR', quote_currency: 'USD', price_digits: 5, calendar_code: 'FX_24X5', market_timezone: 'UTC' },
-      { symbol: 'GERMANY40', display_name: 'Germany 40 Cash (E1)', asset_class: 'INDEX', ig_epic: 'DAX', base_currency: 'EUR', quote_currency: 'EUR', price_digits: 1, calendar_code: 'XETRA_REGULAR', market_timezone: 'Europe/Berlin' },
+      { symbol: 'EURUSD', display_name: 'EUR/USD', asset_class: 'FX', tier: 1, ig_epic: 'EUR', base_currency: 'EUR', quote_currency: 'USD', price_digits: 5, calendar_code: 'FX_24X5', market_timezone: 'UTC' },
+      { symbol: 'GERMANY40', display_name: 'Germany 40 Cash (E1)', asset_class: 'INDEX', tier: 1, ig_epic: 'DAX', base_currency: 'EUR', quote_currency: 'EUR', price_digits: 1, calendar_code: 'XETRA_REGULAR', market_timezone: 'Europe/Berlin' },
     ],
     timeframes: ['M5', 'M15'], periods: ['TODAY', '7D', 'ALL'], execution_enabled: false,
   }));
@@ -38,6 +38,8 @@ class DashboardApiMock {
   macroStatus = vi.fn(() => of({ status: 'STALE', execution_authority: 'DETERMINISTIC_RISK_ENGINE', sources: [], currencies: [], decisions: [] }));
   syncMacro = vi.fn(() => of({ status: 'CURRENT' }));
   shadowTrades = vi.fn(() => of({ count: 0, environment: 'SHADOW', trades: [] }));
+  shadowPerformance = vi.fn(() => of({ days: 30, zero_trade_days_included: true,
+    execution_enabled: false, daily: [] }));
   orderIntents = vi.fn(() => of({ count: 0, orders: [] }));
   riskStatus = vi.fn(() => of({ status: 'CURRENT', policy: null, ledger: null }));
   reconciliation = vi.fn(() => of({ status: 'CLEAR', unresolved: 0, issues: [] }));
@@ -165,9 +167,21 @@ describe('DashboardComponent', () => {
   it('offers Germany 40 from the backend market inventory', async () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     await fixture.whenStable();
+    fixture.componentInstance['selectDashboardTab']('markets');
+    fixture.detectChanges();
     const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
-    expect(buttons.some((button) => button.textContent?.trim() === 'Germany 40 Cash (E1)')).toBe(true);
+    expect(buttons.some((button) => button.textContent?.includes('Germany 40 Cash (E1)'))).toBe(true);
     expect(api.marketInventory).toHaveBeenCalled();
+  });
+
+  it('uses dashboard tabs to keep unrelated long sections hidden', async () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    await fixture.whenStable();
+    expect(fixture.componentInstance['dashboardTab']()).toBe('overview');
+    fixture.componentInstance['selectDashboardTab']('operations');
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('#operational-assurance')?.hasAttribute('hidden')).toBe(false);
+    expect((fixture.nativeElement as HTMLElement).querySelector('#market-data')?.hasAttribute('hidden')).toBe(true);
   });
 
   it('shows the authenticated owner identity', async () => {

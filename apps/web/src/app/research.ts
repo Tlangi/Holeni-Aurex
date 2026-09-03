@@ -20,6 +20,12 @@ export class ResearchComponent {
   protected readonly loading = signal(true);
   protected readonly busy = signal('');
   protected readonly message = signal('');
+  protected readonly researchTab = signal<'overview' | 'protocol' | 'data' | 'holdout' | 'experiments'>('overview');
+  protected readonly researchTabs = [
+    ['overview', 'Market overview'], ['protocol', 'Protocol & lineage'],
+    ['data', 'Data operations'], ['holdout', 'Holdout governance'],
+    ['experiments', 'Experiments'],
+  ] as const;
   protected readonly logoutBusy = signal(false);
   protected readonly selectedExperiment = signal<ResearchExperiment | null>(null);
   protected readonly selectedDimension = signal('direction');
@@ -37,6 +43,15 @@ export class ResearchComponent {
   protected readonly dimensionRows = computed(() => {
     const experiment = this.selectedExperiment();
     return experiment?.decomposition?.[this.selectedDimension()] ?? [];
+  });
+
+  protected readonly marketGroups = computed(() => {
+    const markets = this.data()?.markets ?? [];
+    return [1, 2, 3].map((tier) => ({
+      tier,
+      label: tier === 1 ? 'Core governed markets' : tier === 2 ? 'Expansion research' : 'Research only',
+      markets: markets.filter((market) => market.tier === tier),
+    })).filter((group) => group.markets.length > 0);
   });
 
   protected protocolPassed(research: ResearchStatusData): string {
