@@ -1,11 +1,24 @@
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
-import { signal } from '@angular/core';
+import { of, Subject } from 'rxjs';
+import { ElementRef, signal } from '@angular/core';
 import { vi } from 'vitest';
 import { DashboardComponent } from './app';
 import { DashboardApi } from './dashboard-api';
 import { AuthApi } from './auth-api';
 import { provideRouter, Router } from '@angular/router';
+
+function chartCandles(count: number, start = 1.1) {
+  return Array.from({ length: count }, (_, index) => {
+    const close = start + index * 0.0001;
+    return {
+      open_time_utc: new Date(Date.UTC(2026, 7, 25, 8, index * 5)).toISOString(),
+      open_time_sast: new Date(Date.UTC(2026, 7, 25, 10, index * 5)).toISOString().replace('Z', ''),
+      open: (close - 0.00005).toFixed(5), high: (close + 0.0001).toFixed(5),
+      low: (close - 0.0001).toFixed(5), close: close.toFixed(5), bid_close: null,
+      ask_close: null, spread_close: null, is_regular_session: true, tick_count: 10, source: 'TEST',
+    };
+  });
+}
 
 class DashboardApiMock {
   private readonly dashboard = {
@@ -20,7 +33,7 @@ class DashboardApiMock {
   };
   load = vi.fn(() => of(this.dashboard));
   sync = vi.fn(() => of(this.dashboard));
-  candles = vi.fn(() => of({ candles: [] }));
+  candles = vi.fn((_symbol?: string, _timeframe?: string, _period?: string) => of({ candles: [] }));
   marketInventory = vi.fn(() => of({
     markets: [
       { symbol: 'EURUSD', display_name: 'EUR/USD', asset_class: 'FX', tier: 1, ig_epic: 'EUR', base_currency: 'EUR', quote_currency: 'USD', price_digits: 5, calendar_code: 'FX_24X5', market_timezone: 'UTC' },
@@ -156,12 +169,89 @@ describe('DashboardComponent', () => {
   it('zooms the candle canvas in and out within safe limits', () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     const component = fixture.componentInstance;
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg',
+      session_date: '2026-08-25', period: '7D', candles: chartCandles(200) });
+    component['fitChart']();
     component['zoomChart'](0.25);
+    expect(component['chartVisibleCount']()).toBe(80);
     expect(component['chartZoom']()).toBe(1.25);
     component['resetChartZoom']();
     expect(component['chartZoom']()).toBe(1);
     for (let index = 0; index < 10; index += 1) component['zoomChart'](-0.25);
     expect(component['chartZoom']()).toBe(0.5);
+  });
+
+  it('fits the initial viewport to the latest 100 M5 candles and their prices', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    const candles = chartCandles(200);
+    candles[0] = { ...candles[0], high: '9.00000', low: '0.10000' };
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg',
+      session_date: '2026-08-25', period: '7D', candles });
+    component['fitChart']();
+    const chart = component['candleChart']();
+    expect(component['chartVisibleStart']()).toBe(100);
+    expect(chart.candles).toHaveLength(100);
+    expect(chart.maxValue).toBeLessThan(2);
+    expect(chart.minValue).toBeGreaterThan(1);
+    expect(component['autoFollowLatest']()).toBe(true);
+  });
+
+  it('go to latest restores automatic following after historical navigation', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg',
+      session_date: '2026-08-25', period: 'ALL', candles: chartCandles(300) });
+    component['chartVisibleStart'].set(40);
+    component['chartVisibleCount'].set(100);
+    component['autoFollowLatest'].set(false);
+    component['goToLatest']();
+    expect(component['chartVisibleStart']()).toBe(200);
+    expect(component['autoFollowLatest']()).toBe(true);
+  });
+
+  it('cancels an older candle request so it cannot overwrite the latest market', async () => {
+    const first = new Subject<any>();
+    const second = new Subject<any>();
+    api.candles.mockImplementation((symbol?: string) => symbol === 'EURUSD' ? first : second);
+    const fixture = TestBed.createComponent(DashboardComponent);
+    await fixture.whenStable();
+    fixture.componentInstance['selectMarket']('GERMANY40');
+    second.next({ symbol: 'GERMANY40', timeframe: 'M5', timezone: 'Africa/Johannesburg', session_date: null, period: '7D', candles: chartCandles(40, 18000) });
+    first.next({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg', session_date: null, period: '7D', candles: chartCandles(40) });
+    expect(fixture.componentInstance['marketData']()?.symbol).toBe('GERMANY40');
+    expect(fixture.componentInstance['marketLoading']()).toBe(false);
+  });
+
+  it('chart interactions never call trading mutation endpoints', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg',
+      session_date: null, period: '7D', candles: chartCandles(150) });
+    component['fitChart']();
+    component['zoomChart'](0.25);
+    component['goToLatest']();
+    expect(api.changeControl).not.toHaveBeenCalled();
+    expect(api.changeStrategy).not.toHaveBeenCalled();
+  });
+
+  it('updates chart dimensions only from a non-zero container', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    const element = document.createElement('div');
+    Object.defineProperties(element, { clientWidth: { value: 840 }, clientHeight: { value: 420 } });
+    component['chartViewport'] = new ElementRef(element);
+    component['refreshChartDimensions'](false);
+    expect(component['chartViewportWidth']()).toBe(840);
+    expect(component['chartViewportHeight']()).toBe(420);
+  });
+
+  it('disposes the chart resize observer with the component', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const disconnect = vi.fn();
+    fixture.componentInstance['chartResizeObserver'] = { disconnect } as unknown as ResizeObserver;
+    fixture.destroy();
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it('offers Germany 40 from the backend market inventory', async () => {

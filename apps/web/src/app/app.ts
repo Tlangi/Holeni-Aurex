@@ -1,9 +1,11 @@
-import { afterNextRender, Component, computed, ElementRef, inject, signal, ViewChild } from '@angular/core';
+import { afterNextRender, Component, computed, DestroyRef, ElementRef, inject, signal, ViewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
+import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
 import { AuthApi } from './auth-api';
 import { Router } from '@angular/router';
-import { finalize } from 'rxjs';
+import { catchError, finalize, map, of, Subject, switchMap } from 'rxjs';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { clampWindow, isAtLatest, latestWindow, normalizeCandles, recommendedCandleCount, visiblePriceBounds } from './chart-utils';
 
 interface NavigationItem {
   label: string;
@@ -27,7 +29,12 @@ export class DashboardComponent {
   private readonly dashboardApi = inject(DashboardApi);
   private readonly authApi = inject(AuthApi);
   private readonly router = inject(Router);
-  @ViewChild('chartViewport') private chartViewport?: ElementRef<HTMLDivElement>;
+  private readonly destroyRef = inject(DestroyRef);
+  private chartViewport?: ElementRef<HTMLDivElement>;
+  @ViewChild('chartViewport') set chartViewportRef(value: ElementRef<HTMLDivElement> | undefined) {
+    this.chartViewport = value;
+    this.observeChartViewport(value?.nativeElement);
+  }
 
   protected readonly sidebarOpen = signal(false);
   protected readonly dashboardTab = signal<'overview' | 'research' | 'markets' | 'trading' | 'operations'>('overview');
@@ -43,6 +50,7 @@ export class DashboardComponent {
   protected readonly selectedPeriod = signal('7D');
   protected readonly marketLoading = signal(true);
   protected readonly marketError = signal('');
+  protected readonly marketLastUpdated = signal<Date | null>(null);
   protected readonly tradeHistory = signal<TradeHistoryData | null>(null);
   protected readonly tradingReadiness = signal<TradingReadinessData | null>(null);
   protected readonly modelReadiness = signal<ModelReadinessData | null>(null);
@@ -68,16 +76,25 @@ export class DashboardComponent {
   protected readonly logoutError = signal('');
   protected readonly testingMessage = signal('');
   protected readonly chartDragging = signal(false);
-  protected readonly chartScrollLeft = signal(0);
-  protected readonly chartScrollTop = signal(0);
+  protected readonly chartVisibleStart = signal(0);
+  protected readonly chartVisibleCount = signal(100);
   protected readonly chartViewportWidth = signal(1200);
   protected readonly chartViewportHeight = signal(360);
   protected readonly chartZoom = signal(1);
+  protected readonly autoFollowLatest = signal(true);
+  protected readonly hoveredCandleIndex = signal<number | null>(null);
+  protected readonly crosshairX = signal<number | null>(null);
+  protected readonly crosshairY = signal<number | null>(null);
+  private readonly marketRequests = new Subject<{ symbol: string; timeframe: string; period: string }>();
+  private chartResizeObserver?: ResizeObserver;
+  private resizeFrame: number | null = null;
+  private marketRefreshTimer: number | null = null;
   private chartPointerId: number | null = null;
+  private readonly chartPointers = new Map<number, { x: number; y: number }>();
+  private chartPinchDistance: number | null = null;
   private chartDragStartX = 0;
-  private chartDragStartY = 0;
-  private chartDragStartScrollLeft = 0;
-  private chartDragStartScrollTop = 0;
+  private chartDragStartVisibleStart = 0;
+  private chartDragMoved = false;
   protected readonly todayLabel = new Intl.DateTimeFormat('en-ZA', {
     weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Africa/Johannesburg',
   }).format(new Date());
@@ -177,41 +194,54 @@ export class DashboardComponent {
     });
   });
   protected readonly candleChart = computed(() => this.buildCandleChart());
-  protected readonly visiblePriceTicks = computed(() => {
-    const chart = this.candleChart();
-    const viewportHeight = this.chartViewportHeight();
-    const axisBottom = Math.max(70, viewportHeight - 60);
-    const plotHeight = chart.chartHeight - chart.plotTop - chart.plotBottom;
-    return Array.from({ length: 5 }, (_, index) => {
-      const y = chart.plotTop + ((axisBottom - chart.plotTop) * index) / 4;
-      const worldY = this.chartScrollTop() + y;
-      const ratio = (worldY - chart.plotTop) / Math.max(plotHeight, 1);
-      const value = chart.maxValue - ratio * (chart.maxValue - chart.minValue);
-      return { y, label: value.toFixed(chart.priceDigits) };
-    });
+  protected readonly visiblePriceTicks = computed(() => this.candleChart().priceTicks);
+  protected readonly visibleTimeTicks = computed(() => this.candleChart().timeTicks);
+  protected readonly hoveredCandle = computed(() => {
+    const index = this.hoveredCandleIndex();
+    return index === null ? null : this.marketData()?.candles[index] ?? null;
   });
-  protected readonly visibleTimeTicks = computed(() => {
-    const source = this.marketData()?.candles ?? [];
-    if (!source.length) return [];
-    const chart = this.candleChart();
-    const viewportWidth = this.chartViewportWidth();
-    const usableWidth = Math.max(viewportWidth - chart.plotLeft - 20, 200);
-    return Array.from({ length: 6 }, (_, index) => {
-      const x = chart.plotLeft + (usableWidth * index) / 5;
-      const worldX = this.chartScrollLeft() + x;
-      const ratio = (worldX - chart.plotLeft) / Math.max(chart.chartWidth - chart.plotLeft - chart.plotRight, 1);
-      const sourceIndex = Math.max(0, Math.min(source.length - 1, Math.round(ratio * (source.length - 1))));
-      const stamp = new Date(source[sourceIndex].open_time_sast + '+02:00');
-      return {
-        x,
-        label: stamp.toLocaleString('en-ZA', this.selectedPeriod() === 'TODAY'
-          ? { hour: '2-digit', minute: '2-digit' }
-          : { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
-      };
-    });
+  protected readonly chartIsStale = computed(() => {
+    const latest = this.marketData()?.candles.at(-1);
+    if (!latest) return false;
+    const intervalMinutes = ({ M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440 } as Record<string, number>)[this.selectedTimeframe()] ?? 5;
+    return Date.now() - Date.parse(latest.open_time_utc) > intervalMinutes * 3 * 60_000;
   });
 
   constructor() {
+    this.marketRequests.pipe(
+      switchMap((request) => {
+        this.marketLoading.set(true);
+        this.marketError.set('');
+        return this.dashboardApi.candles(request.symbol, request.timeframe, request.period).pipe(
+          map((data) => ({ data, request, error: '' })),
+          catchError(() => of({ data: null, request, error: 'Candle data is temporarily unavailable.' })),
+        );
+      }),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(({ data, error }) => {
+      this.marketLoading.set(false);
+      if (error || !data) {
+        this.marketError.set(error);
+        return;
+      }
+      const candles = normalizeCandles(data.candles);
+      const previous = this.marketData();
+      const sameSeries = !!previous && previous.symbol === data.symbol && previous.timeframe === data.timeframe && previous.period === data.period;
+      this.marketData.set({ ...data, candles });
+      this.marketLastUpdated.set(new Date());
+      if (!sameSeries) this.fitChart();
+      else if (this.autoFollowLatest()) this.goToLatest();
+      else {
+        const window = clampWindow(candles.length, this.chartVisibleStart(), this.chartVisibleCount());
+        this.chartVisibleStart.set(window.start);
+        this.chartVisibleCount.set(window.count);
+      }
+    });
+    this.destroyRef.onDestroy(() => {
+      this.chartResizeObserver?.disconnect();
+      if (this.resizeFrame !== null) cancelAnimationFrame(this.resizeFrame);
+      if (this.marketRefreshTimer !== null) window.clearInterval(this.marketRefreshTimer);
+    });
     afterNextRender(() => {
       this.loadDashboard(false);
       this.loadMarketInventory();
@@ -219,20 +249,26 @@ export class DashboardComponent {
       this.loadTradeHistory();
       this.loadTradingReadiness();
       this.loadTradingOperations();
+      this.marketRefreshTimer = window.setInterval(() => {
+        if (this.dashboardTab() === 'markets' && !this.marketLoading()) this.loadMarket();
+      }, 30_000);
     });
   }
 
   protected selectMarket(symbol: string): void {
+    if (symbol === this.selectedMarket()) return;
     this.selectedMarket.set(symbol);
     this.loadMarket();
   }
 
   protected selectTimeframe(timeframe: string): void {
+    if (timeframe === this.selectedTimeframe()) return;
     this.selectedTimeframe.set(timeframe);
     this.loadMarket();
   }
 
   protected selectPeriod(period: string): void {
+    if (period === this.selectedPeriod()) return;
     this.selectedPeriod.set(period);
     this.loadMarket();
   }
@@ -247,6 +283,7 @@ export class DashboardComponent {
     requestAnimationFrame(() => {
       const tabs = document.querySelector<HTMLElement>('.dashboard-tabs');
       if (typeof tabs?.scrollIntoView === 'function') tabs.scrollIntoView({ behavior: 'smooth' });
+      if (tab === 'markets') this.refreshChartDimensions(true);
     });
   }
 
@@ -264,6 +301,7 @@ export class DashboardComponent {
       if (typeof element?.scrollIntoView === 'function') {
         element.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
+      if (tab === 'markets') this.refreshChartDimensions(true);
     });
   }
 
@@ -329,27 +367,62 @@ export class DashboardComponent {
     if (event.button !== 0) return;
     const viewport = this.chartViewport?.nativeElement;
     if (!viewport) return;
+    this.chartPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.chartPointers.size === 2) {
+      const [first, second] = [...this.chartPointers.values()];
+      this.chartPinchDistance = Math.hypot(second.x - first.x, second.y - first.y);
+      this.chartPointerId = null;
+      this.chartDragging.set(false);
+      event.preventDefault();
+      return;
+    }
     this.chartPointerId = event.pointerId;
     this.chartDragStartX = event.clientX;
-    this.chartDragStartY = event.clientY;
-    this.chartDragStartScrollLeft = viewport.scrollLeft;
-    this.chartDragStartScrollTop = viewport.scrollTop;
+    this.chartDragStartVisibleStart = this.chartVisibleStart();
+    this.chartDragMoved = false;
     viewport.setPointerCapture(event.pointerId);
     this.chartDragging.set(true);
     event.preventDefault();
   }
 
   protected moveChartDrag(event: PointerEvent): void {
-    if (this.chartPointerId !== event.pointerId) return;
     const viewport = this.chartViewport?.nativeElement;
     if (!viewport) return;
-    viewport.scrollLeft = this.chartDragStartScrollLeft - (event.clientX - this.chartDragStartX);
-    viewport.scrollTop = this.chartDragStartScrollTop - (event.clientY - this.chartDragStartY);
-    this.syncChartViewport(viewport);
+    if (this.chartPointers.has(event.pointerId)) this.chartPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.chartPointers.size === 2 && this.chartPinchDistance) {
+      const [first, second] = [...this.chartPointers.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      if (distance > this.chartPinchDistance * 1.12) {
+        this.zoomChart(0.25);
+        this.chartPinchDistance = distance;
+      } else if (distance < this.chartPinchDistance * .88) {
+        this.zoomChart(-0.25);
+        this.chartPinchDistance = distance;
+      }
+      event.preventDefault();
+      return;
+    }
+    if (this.chartPointerId !== event.pointerId) {
+      this.updateCrosshair(event);
+      return;
+    }
+    const candleWidth = Math.max((viewport.clientWidth - 96) / Math.max(this.chartVisibleCount(), 1), 1);
+    const delta = event.clientX - this.chartDragStartX;
+    const shift = Math.round(-delta / candleWidth);
+    const total = this.marketData()?.candles.length ?? 0;
+    const window = clampWindow(total, this.chartDragStartVisibleStart + shift, this.chartVisibleCount());
+    this.chartVisibleStart.set(window.start);
+    if (Math.abs(delta) > 3) {
+      this.chartDragMoved = true;
+      this.autoFollowLatest.set(isAtLatest(total, window.start, window.count));
+    }
+    this.updateCrosshair(event);
     event.preventDefault();
   }
 
   protected endChartDrag(event: PointerEvent): void {
+    this.chartPointers.delete(event.pointerId);
+    if (this.chartPointers.size < 2) this.chartPinchDistance = null;
     if (this.chartPointerId !== event.pointerId) return;
     const viewport = this.chartViewport?.nativeElement;
     if (viewport?.hasPointerCapture(event.pointerId)) viewport.releasePointerCapture(event.pointerId);
@@ -357,34 +430,71 @@ export class DashboardComponent {
     this.chartDragging.set(false);
   }
 
-  protected chartScrolled(): void {
-    const viewport = this.chartViewport?.nativeElement;
-    if (viewport) this.syncChartViewport(viewport);
+  protected clearCrosshair(): void {
+    if (this.chartDragging()) return;
+    this.hoveredCandleIndex.set(null);
+    this.crosshairX.set(null);
+    this.crosshairY.set(null);
   }
 
   protected zoomChart(change: number): void {
-    const viewport = this.chartViewport?.nativeElement;
-    const horizontalAnchor = viewport?.scrollWidth
-      ? (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth
-      : 0.5;
-    const verticalAnchor = viewport?.scrollHeight
-      ? (viewport.scrollTop + viewport.clientHeight / 2) / viewport.scrollHeight
-      : 0.5;
-    const next = Math.max(0.5, Math.min(2.5, Math.round((this.chartZoom() + change) * 4) / 4));
-    if (next === this.chartZoom()) return;
-    this.chartZoom.set(next);
-    requestAnimationFrame(() => {
-      const current = this.chartViewport?.nativeElement;
-      if (!current) return;
-      current.scrollLeft = Math.max(0, horizontalAnchor * current.scrollWidth - current.clientWidth / 2);
-      current.scrollTop = Math.max(0, verticalAnchor * current.scrollHeight - current.clientHeight / 2);
-      this.syncChartViewport(current);
-    });
+    const total = this.marketData()?.candles.length ?? 0;
+    if (!total) return;
+    const currentCount = this.chartVisibleCount();
+    const factor = change > 0 ? 0.8 : 1.25;
+    const nextCount = Math.max(20, Math.min(total, Math.round(currentCount * factor)));
+    if (nextCount === currentCount) return;
+    const wasLatest = this.autoFollowLatest() && isAtLatest(total, this.chartVisibleStart(), currentCount);
+    const center = this.chartVisibleStart() + currentCount / 2;
+    const window = wasLatest ? latestWindow(total, nextCount) : clampWindow(total, center - nextCount / 2, nextCount);
+    this.chartVisibleStart.set(window.start);
+    this.chartVisibleCount.set(window.count);
+    this.chartZoom.set(Math.max(0.5, Math.min(2.5, recommendedCandleCount(this.selectedTimeframe()) / window.count)));
+    this.autoFollowLatest.set(wasLatest);
   }
 
   protected resetChartZoom(): void {
-    const change = 1 - this.chartZoom();
-    if (change) this.zoomChart(change);
+    this.fitChart();
+  }
+
+  protected fitChart(): void {
+    const total = this.marketData()?.candles.length ?? 0;
+    if (!total) return;
+    const window = latestWindow(total, recommendedCandleCount(this.selectedTimeframe()));
+    this.chartVisibleStart.set(window.start);
+    this.chartVisibleCount.set(window.count);
+    this.chartZoom.set(1);
+    this.autoFollowLatest.set(true);
+    this.scheduleChartDimensions();
+  }
+
+  protected goToLatest(): void {
+    const total = this.marketData()?.candles.length ?? 0;
+    if (!total) return;
+    const window = latestWindow(total, this.chartVisibleCount());
+    this.chartVisibleStart.set(window.start);
+    this.chartVisibleCount.set(window.count);
+    this.autoFollowLatest.set(true);
+  }
+
+  protected chartWheel(event: WheelEvent): void {
+    if (Math.abs(event.deltaY) < 1) return;
+    event.preventDefault();
+    this.zoomChart(event.deltaY < 0 ? 0.25 : -0.25);
+  }
+
+  protected chartKeydown(event: KeyboardEvent): void {
+    if (event.key === '+' || event.key === '=') this.zoomChart(0.25);
+    else if (event.key === '-') this.zoomChart(-0.25);
+    else if (event.key === 'End') this.goToLatest();
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      const total = this.marketData()?.candles.length ?? 0;
+      const direction = event.key === 'ArrowLeft' ? -1 : 1;
+      const window = clampWindow(total, this.chartVisibleStart() + direction * Math.max(1, Math.round(this.chartVisibleCount() * .1)), this.chartVisibleCount());
+      this.chartVisibleStart.set(window.start);
+      this.autoFollowLatest.set(isAtLatest(total, window.start, window.count));
+    } else return;
+    event.preventDefault();
   }
 
   protected changeStrategy(id: string, current: 'ACTIVE' | 'PAUSED'): void {
@@ -492,19 +602,9 @@ export class DashboardComponent {
     });
   }
 
-  private loadMarket(): void {
-    this.marketLoading.set(true);
-    this.marketError.set('');
-    this.dashboardApi.candles(this.selectedMarket(), this.selectedTimeframe(), this.selectedPeriod()).subscribe({
-      next: (data) => {
-        this.marketData.set(data);
-        this.marketLoading.set(false);
-        requestAnimationFrame(() => this.scrollChartToLatest());
-      },
-      error: () => {
-        this.marketError.set('Candle data is temporarily unavailable.');
-        this.marketLoading.set(false);
-      },
+  protected loadMarket(): void {
+    this.marketRequests.next({
+      symbol: this.selectedMarket(), timeframe: this.selectedTimeframe(), period: this.selectedPeriod(),
     });
   }
 
@@ -596,7 +696,7 @@ export class DashboardComponent {
   }
 
   private buildCandleChart(): {
-    candles: Array<{ x: number; wickTop: number; wickBottom: number; bodyY: number; bodyHeight: number; width: number; rising: boolean }>;
+    candles: Array<{ sourceIndex: number; x: number; wickTop: number; wickBottom: number; bodyY: number; bodyHeight: number; width: number; rising: boolean }>;
     minLabel: string;
     maxLabel: string;
     latestLabel: string;
@@ -620,39 +720,44 @@ export class DashboardComponent {
   } {
     const source = this.marketData()?.candles ?? [];
     if (!source.length) return { candles: [], minLabel: '—', maxLabel: '—', latestLabel: '—',
-      latestPrice: '—', change: '—', positive: true, openPrice: '—', highPrice: '—', lowPrice: '—', priceTicks: [], timeTicks: [], chartWidth: 900, chartHeight: 600,
+      latestPrice: '—', change: '—', positive: true, openPrice: '—', highPrice: '—', lowPrice: '—', priceTicks: [], timeTicks: [], chartWidth: 900, chartHeight: 360,
       minValue: 0, maxValue: 0, priceDigits: 5, plotLeft: 76, plotRight: 24, plotTop: 24, plotBottom: 68 };
-    const zoom = this.chartZoom();
-    const width = Math.max(760, Math.round(Math.max(1200, 100 + source.length * 14) * zoom));
-    const height = Math.max(420, Math.round(600 * zoom));
-    const left = 76, right = 24, top = 24, bottom = 68;
+    const window = clampWindow(source.length, this.chartVisibleStart(), this.chartVisibleCount());
+    const visible = source.slice(window.start, window.start + window.count);
+    const width = Math.max(320, this.chartViewportWidth());
+    const height = Math.max(280, this.chartViewportHeight());
+    const left = width < 520 ? 64 : 76, right = width < 520 ? 12 : 20, top = 18, bottom = width < 520 ? 58 : 62;
     const plotWidth = width - left - right;
     const plotHeight = height - top - bottom;
-    const lows = source.map((c) => Number(c.low));
-    const highs = source.map((c) => Number(c.high));
-    const min = Math.min(...lows), max = Math.max(...highs), spread = Math.max(max - min, 0.00001);
+    const digits = this.marketInventory()?.markets.find((market) => market.symbol === this.selectedMarket())?.price_digits
+      ?? (this.selectedMarket() === 'GERMANY40' ? 1 : this.selectedMarket() === 'USDJPY' ? 3 : 5);
+    const tick = 10 ** -digits;
+    const bounds = visiblePriceBounds(visible, tick);
+    const min = bounds.minimum, max = bounds.maximum, spread = max - min;
     const y = (value: number) => top + ((max - value) / spread) * plotHeight;
-    const step = plotWidth / source.length;
-    const candles = source.map((candle, index) => {
+    const step = plotWidth / Math.max(visible.length * 1.08, 1);
+    const candles = visible.map((candle, index) => {
       const open = Number(candle.open), close = Number(candle.close);
       const bodyTop = y(Math.max(open, close)), bodyBottom = y(Math.min(open, close));
-      return { x: left + step * index + step / 2, wickTop: y(Number(candle.high)), wickBottom: y(Number(candle.low)),
+      return { sourceIndex: window.start + index, x: left + step * index + step / 2, wickTop: y(Number(candle.high)), wickBottom: y(Number(candle.low)),
         bodyY: bodyTop, bodyHeight: Math.max(bodyBottom - bodyTop, 2), width: Math.max(Math.min(step * 0.56, 12), 2), rising: close >= open };
     });
-    const digits = this.selectedMarket() === 'GERMANY40' ? 1 : this.selectedMarket() === 'USDJPY' ? 3 : 5;
     const firstOpen = Number(source[0].open), latestClose = Number(source[source.length - 1].close);
+    const periodHigh = Math.max(...source.map((candle) => Number(candle.high)));
+    const periodLow = Math.min(...source.map((candle) => Number(candle.low)));
     const changePct = firstOpen ? ((latestClose - firstOpen) / firstOpen) * 100 : 0;
     const priceTicks = Array.from({ length: 5 }, (_, index) => {
       const value = max - (spread * index) / 4;
       return { y: top + (plotHeight * index) / 4, label: value.toFixed(digits) };
     });
-    const tickCount = Math.min(Math.max(5, Math.floor(plotWidth / 190)), source.length);
+    const tickCount = Math.min(Math.max(3, Math.floor(plotWidth / 170)), visible.length);
     const timeTicks = Array.from({ length: tickCount }, (_, tickIndex) => {
-      const sourceIndex = tickCount === 1 ? 0 : Math.round((tickIndex * (source.length - 1)) / (tickCount - 1));
+      const visibleIndex = tickCount === 1 ? 0 : Math.round((tickIndex * (visible.length - 1)) / (tickCount - 1));
+      const sourceIndex = window.start + visibleIndex;
       const stamp = new Date(source[sourceIndex].open_time_sast + '+02:00');
       const includeDate = this.selectedPeriod() !== 'TODAY';
       return {
-        x: left + step * sourceIndex + step / 2,
+        x: left + step * visibleIndex + step / 2,
         label: stamp.toLocaleString('en-ZA', includeDate
           ? { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }
           : { hour: '2-digit', minute: '2-digit' }),
@@ -661,24 +766,52 @@ export class DashboardComponent {
     return { candles, minLabel: min.toFixed(digits), maxLabel: max.toFixed(digits),
       latestLabel: new Date(source[source.length - 1].open_time_sast + '+02:00').toLocaleString('en-ZA', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }),
       latestPrice: latestClose.toFixed(digits), change: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(3)}%`, positive: changePct >= 0,
-      openPrice: firstOpen.toFixed(digits), highPrice: max.toFixed(digits), lowPrice: min.toFixed(digits), priceTicks, timeTicks,
+      openPrice: firstOpen.toFixed(digits), highPrice: periodHigh.toFixed(digits), lowPrice: periodLow.toFixed(digits), priceTicks, timeTicks,
       chartWidth: width, chartHeight: height, minValue: min, maxValue: max, priceDigits: digits,
       plotLeft: left, plotRight: right, plotTop: top, plotBottom: bottom };
   }
 
-  private syncChartViewport(viewport: HTMLDivElement): void {
-    this.chartScrollLeft.set(viewport.scrollLeft);
-    this.chartScrollTop.set(viewport.scrollTop);
-    this.chartViewportWidth.set(viewport.clientWidth);
-    this.chartViewportHeight.set(viewport.clientHeight);
+  private observeChartViewport(viewport?: HTMLDivElement): void {
+    this.chartResizeObserver?.disconnect();
+    if (!viewport) return;
+    if (typeof ResizeObserver !== 'undefined') {
+      this.chartResizeObserver = new ResizeObserver(() => this.scheduleChartDimensions());
+      this.chartResizeObserver.observe(viewport);
+    }
+    this.scheduleChartDimensions();
   }
 
-  private scrollChartToLatest(): void {
+  private scheduleChartDimensions(): void {
+    if (this.resizeFrame !== null) cancelAnimationFrame(this.resizeFrame);
+    this.resizeFrame = requestAnimationFrame(() => {
+      this.resizeFrame = null;
+      this.refreshChartDimensions(false);
+    });
+  }
+
+  private refreshChartDimensions(refit: boolean): void {
     const viewport = this.chartViewport?.nativeElement;
     if (!viewport) return;
-    viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-    viewport.scrollTop = Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2);
-    this.syncChartViewport(viewport);
+    const width = viewport.clientWidth;
+    const height = viewport.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    this.chartViewportWidth.set(width);
+    this.chartViewportHeight.set(height);
+    if (refit && this.autoFollowLatest()) this.goToLatest();
+  }
+
+  private updateCrosshair(event: PointerEvent): void {
+    const viewport = this.chartViewport?.nativeElement;
+    const chart = this.candleChart();
+    if (!viewport || !chart.candles.length) return;
+    const rect = viewport.getBoundingClientRect();
+    const x = Math.max(chart.plotLeft, Math.min(event.clientX - rect.left, chart.chartWidth - chart.plotRight));
+    const y = Math.max(chart.plotTop, Math.min(event.clientY - rect.top, chart.chartHeight - chart.plotBottom));
+    const candle = chart.candles.reduce((closest, item) =>
+      Math.abs(item.x - x) < Math.abs(closest.x - x) ? item : closest, chart.candles[0]);
+    this.hoveredCandleIndex.set(candle.sourceIndex);
+    this.crosshairX.set(candle.x);
+    this.crosshairY.set(y);
   }
 
   private chartPath(closeArea: boolean): string {

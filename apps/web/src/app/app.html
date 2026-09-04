@@ -253,56 +253,71 @@
             </button>
             <div class="range-selector" aria-label="Market">
               @for (market of marketInventory()?.markets ?? []; track market.symbol) {
-                <button type="button" [class.active]="selectedMarket() === market.symbol" (click)="selectMarket(market.symbol)">{{ market.display_name }} <small>T{{ market.tier }}</small></button>
+                <button type="button" [class.active]="selectedMarket() === market.symbol" [disabled]="marketLoading()" (click)="selectMarket(market.symbol)">{{ market.display_name }} <small>T{{ market.tier }}</small></button>
               }
             </div>
             <div class="range-selector" aria-label="Timeframe">
               @for (timeframe of marketInventory()?.timeframes ?? []; track timeframe) {
-                <button type="button" [class.active]="selectedTimeframe() === timeframe" (click)="selectTimeframe(timeframe)">{{ timeframe }}</button>
+                <button type="button" [class.active]="selectedTimeframe() === timeframe" [disabled]="marketLoading()" (click)="selectTimeframe(timeframe)">{{ timeframe }}</button>
               }
             </div>
             <div class="range-selector" aria-label="History period">
               @for (period of marketInventory()?.periods ?? []; track period) {
-                <button type="button" [class.active]="selectedPeriod() === period" (click)="selectPeriod(period)">{{ period === 'TODAY' ? 'Today' : period }}</button>
+                <button type="button" [class.active]="selectedPeriod() === period" [disabled]="marketLoading()" (click)="selectPeriod(period)">{{ period === 'TODAY' ? 'Today' : period }}</button>
               }
             </div>
             <div class="chart-zoom-controls" aria-label="Chart zoom">
-              <button type="button" aria-label="Zoom out" title="Zoom out" [disabled]="chartZoom() <= 0.5" (click)="zoomChart(-0.25)">−</button>
-              <button class="zoom-level" type="button" aria-label="Reset chart zoom" title="Reset zoom" (click)="resetChartZoom()">{{ (chartZoom() * 100).toFixed(0) }}%</button>
-              <button type="button" aria-label="Zoom in" title="Zoom in" [disabled]="chartZoom() >= 2.5" (click)="zoomChart(0.25)">+</button>
+              <button type="button" aria-label="Zoom out" title="Show more candles" [disabled]="marketLoading() || chartVisibleCount() >= (marketData()?.candles?.length ?? 0)" (click)="zoomChart(-0.25)">−</button>
+              <button class="zoom-level" type="button" aria-label="Reset chart to recommended viewport" title="Reset to recommended viewport" [disabled]="marketLoading()" (click)="resetChartZoom()">{{ (chartZoom() * 100).toFixed(0) }}%</button>
+              <button type="button" aria-label="Zoom in" title="Show fewer candles" [disabled]="marketLoading() || chartVisibleCount() <= 20" (click)="zoomChart(0.25)">+</button>
             </div>
+            <button class="chart-action" type="button" [disabled]="marketLoading() || !marketData()?.candles?.length" (click)="fitChart()">Fit chart</button>
+            <button class="chart-action" type="button" [class.active]="autoFollowLatest()" [disabled]="marketLoading() || !marketData()?.candles?.length || autoFollowLatest()" (click)="goToLatest()">Go to latest</button>
           </div>
         </div>
         @if (testingMessage()) { <div class="testing-message"><span class="status-dot"></span>{{ testingMessage() }}</div> }
-        @if (marketError()) { <div class="chart-empty"><strong>Market data unavailable</strong><span>{{ marketError() }}</span></div> }
-        @else if (marketLoading()) { <div class="chart-empty"><strong>Loading completed candles…</strong></div> }
+        @if (marketError()) { <div class="chart-notice error" role="alert"><span><strong>Market data unavailable.</strong> {{ marketError() }} The last valid chart is preserved.</span><button type="button" (click)="loadMarket()">Retry</button></div> }
+        @if (marketLoading() && !marketData()) { <div class="chart-empty" role="status"><strong>Loading completed candles…</strong></div> }
         @else if (!candleChart().candles.length) { <div class="chart-empty"><strong>No completed {{ selectedTimeframe() }} candles yet</strong><span>The streaming service is building this timeframe.</span></div> }
         @else {
           <div class="price-overview">
             <div class="live-price"><span>{{ selectedMarket() }} · {{ selectedTimeframe() }}</span><strong>{{ candleChart().latestPrice }}</strong><em [class.negative]="!candleChart().positive">{{ candleChart().change }}</em></div>
-            <div class="ohlc-strip"><span><small>Period open</small><strong>{{ candleChart().openPrice }}</strong></span><span><small>High</small><strong>{{ candleChart().highPrice }}</strong></span><span><small>Low</small><strong>{{ candleChart().lowPrice }}</strong></span><span><small>Candles</small><strong>{{ marketData()?.candles?.length ?? 0 }}</strong></span><span><small>Latest SAST</small><strong>{{ candleChart().latestLabel }}</strong></span></div>
+            <div class="ohlc-strip"><span><small>Period open</small><strong>{{ candleChart().openPrice }}</strong></span><span><small>Period high</small><strong>{{ candleChart().highPrice }}</strong></span><span><small>Period low</small><strong>{{ candleChart().lowPrice }}</strong></span><span><small>Requested / visible</small><strong>{{ selectedPeriod() }} · {{ chartVisibleCount() }} of {{ marketData()?.candles?.length ?? 0 }}</strong></span><span><small>Last updated SAST</small><strong>{{ marketLastUpdated() | date:'dd MMM, HH:mm:ss':'Africa/Johannesburg' }}</strong></span></div>
           </div>
-          <p class="chart-scroll-hint">Click and drag the plot in any direction. The fixed axes update as the candle history moves.</p>
+          <div class="chart-status-line"><span>{{ autoFollowLatest() ? 'Following latest candle' : 'Viewing historical candles' }}</span><span [class.stale]="chartIsStale()">{{ chartIsStale() ? 'Data may be stale' : 'Latest completed candle · ' + candleChart().latestLabel + ' SAST' }}</span></div>
+          <p class="chart-scroll-hint">Drag or swipe horizontally to browse history. Use the mouse wheel or zoom controls to change the visible range.</p>
           <div class="candle-chart-stage">
           <div #chartViewport class="candle-chart-wrap" [class.dragging]="chartDragging()" tabindex="0"
             aria-label="Pannable candle history chart"
             (pointerdown)="beginChartDrag($event)" (pointermove)="moveChartDrag($event)"
-            (pointerup)="endChartDrag($event)" (pointercancel)="endChartDrag($event)" (scroll)="chartScrolled()">
+            (pointerup)="endChartDrag($event)" (pointercancel)="endChartDrag($event)" (pointerleave)="clearCrosshair()" (wheel)="chartWheel($event)" (keydown)="chartKeydown($event)">
+            @if (marketLoading()) { <div class="chart-loading" role="status">Updating chart…</div> }
             <svg class="candle-chart" [attr.width]="candleChart().chartWidth" [attr.height]="candleChart().chartHeight"
               [attr.viewBox]="'0 0 ' + candleChart().chartWidth + ' ' + candleChart().chartHeight"
               role="img" [attr.aria-label]="selectedMarket() + ' price by time candlestick chart'">
-              <rect class="plot-background" x="76" y="24" [attr.width]="candleChart().chartWidth - 100" [attr.height]="candleChart().chartHeight - 92" rx="4" />
+              <rect class="plot-background" [attr.x]="candleChart().plotLeft" [attr.y]="candleChart().plotTop" [attr.width]="candleChart().chartWidth - candleChart().plotLeft - candleChart().plotRight" [attr.height]="candleChart().chartHeight - candleChart().plotTop - candleChart().plotBottom" rx="4" />
               @for (tick of candleChart().priceTicks; track tick.label) {
                 <line class="price-grid" x1="76" [attr.x2]="candleChart().chartWidth - 24" [attr.y1]="tick.y" [attr.y2]="tick.y" />
               }
               @for (tick of candleChart().timeTicks; track tick.x) {
                 <line class="time-grid" [attr.x1]="tick.x" [attr.x2]="tick.x" y1="24" [attr.y2]="candleChart().chartHeight - 68" />
               }
-              @for (candle of candleChart().candles; track candle.x) {
+              @for (candle of candleChart().candles; track candle.sourceIndex) {
                 <line class="candle-wick" [class.falling]="!candle.rising" [attr.x1]="candle.x" [attr.x2]="candle.x" [attr.y1]="candle.wickTop" [attr.y2]="candle.wickBottom" />
                 <rect class="candle-body" [class.falling]="!candle.rising" [attr.x]="candle.x - candle.width / 2" [attr.y]="candle.bodyY" [attr.width]="candle.width" [attr.height]="candle.bodyHeight" rx="1" />
               }
+              @if (crosshairX() !== null && crosshairY() !== null) {
+                <line class="crosshair" [attr.x1]="crosshairX()" [attr.x2]="crosshairX()" [attr.y1]="candleChart().plotTop" [attr.y2]="candleChart().chartHeight - candleChart().plotBottom" />
+                <line class="crosshair" [attr.x1]="candleChart().plotLeft" [attr.x2]="candleChart().chartWidth - candleChart().plotRight" [attr.y1]="crosshairY()" [attr.y2]="crosshairY()" />
+              }
             </svg>
+            @if (hoveredCandle(); as candle) {
+              <div class="candle-tooltip" [class.align-left]="(crosshairX() ?? 0) > candleChart().chartWidth * .65">
+                <strong>{{ candle.open_time_utc | date:'dd MMM yyyy, HH:mm':'Africa/Johannesburg' }} SAST</strong>
+                <span>O {{ candle.open }} · H {{ candle.high }}</span><span>L {{ candle.low }} · C {{ candle.close }}</span>
+                <small>{{ candle.bid_close && candle.ask_close ? 'Bid ' + candle.bid_close + ' · Ask ' + candle.ask_close : 'Mid-price OHLC' }}</small>
+              </div>
+            }
           </div>
           <div class="fixed-price-axis" aria-hidden="true">
             <strong>Price</strong>
