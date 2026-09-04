@@ -138,7 +138,10 @@ class Settings(BaseSettings):
             missing = []
             if len(self.auth_hash_pepper) < 32: missing.append("AUTH_HASH_PEPPER")
             if not self.session_cookie_secure: missing.append("SESSION_COOKIE_SECURE")
-            if self.sql_trust_server_certificate: missing.append("SQL_TRUST_SERVER_CERTIFICATE")
+            sql_is_loopback = self.sql_host.lower() in {"127.0.0.1", "localhost", "::1"} or \
+                self.sql_server.lower().split("\\", 1)[0] in {".", "(local)", "localhost", "127.0.0.1"}
+            if self.sql_trust_server_certificate and not sql_is_loopback:
+                missing.append("SQL_TRUST_SERVER_CERTIFICATE")
             if any(origin.startswith("http://") for origin in self.allowed_origins):
                 missing.append("HTTPS_WEB_ORIGINS")
             if missing:
