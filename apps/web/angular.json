@@ -47,6 +47,12 @@
           "configurations": {
             "production": {
               "outputMode": "static",
+              "optimization": {
+                "styles": {
+                  "minify": true,
+                  "inlineCritical": false
+                }
+              },
               "budgets": [
                 {
                   "type": "initial",
