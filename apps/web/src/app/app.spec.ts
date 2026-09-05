@@ -45,6 +45,9 @@ class DashboardApiMock {
   tradingReadiness = vi.fn(() => of({ status: 'NOT_READY', blockers: [] }));
   modelReadiness = vi.fn(() => of({ required_feature_rows: 2000, markets: [] }));
   modelValidation = vi.fn(() => of({ promotion_policy: 'STRICT', models: [] }));
+  researchJobs = vi.fn(() => of({ active_job: null, latest_successful_job: null, jobs: [],
+    system_status: 'IDLE', stale_after_seconds: 120, execution_enabled: false,
+    governance_notice: 'Training completion does not validate a model or enable trading.' }));
   replayRuns = vi.fn(() => of({ runs: [] }));
   forwardEvidence = vi.fn(() => of({ policy: 'FORWARD_EVIDENCE_NEVER_OVERRIDES_VALIDATION_OR_RISK_GATES', latest: [], snapshots: [] }));
   runReplay = vi.fn(() => of({ status: 'COMPLETED' }));
@@ -233,6 +236,43 @@ describe('DashboardComponent', () => {
     component['goToLatest']();
     expect(api.changeControl).not.toHaveBeenCalled();
     expect(api.changeStrategy).not.toHaveBeenCalled();
+  });
+
+  it('preserves historical viewport when a new live candle arrives', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    const candles = chartCandles(150);
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg',
+      session_date: null, period: '7D', candles });
+    component['chartVisibleStart'].set(10);
+    component['chartVisibleCount'].set(50);
+    component['autoFollowLatest'].set(false);
+    component['applyStreamCandle'](chartCandles(151).at(-1)!);
+    expect(component['marketData']()?.candles).toHaveLength(151);
+    expect(component['chartVisibleStart']()).toBe(10);
+    expect(component['autoFollowLatest']()).toBe(false);
+  });
+
+  it('renders honest unverified quality and persisted training state', async () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    await fixture.whenStable();
+    const component = fixture.componentInstance;
+    component['dashboardTab'].set('research');
+    component['researchJobs'].set({ active_job: null, latest_successful_job: null, jobs: [], system_status: 'IDLE',
+      stale_after_seconds: 120, execution_enabled: false,
+      governance_notice: 'Training completion does not validate a model or enable trading.' });
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg', session_date: null,
+      period: '7D', candles: chartCandles(10), quality: { requested_start_utc: null, requested_end_utc: '2026-09-04T18:00:00Z',
+        actual_start_utc: '2026-09-04T17:00:00Z', actual_end_utc: '2026-09-04T18:00:00Z', returned_candle_count: 10,
+        expected_candle_count: null, completeness_percentage: null, gap_count: 0, missing_candle_count: null,
+        period_not_retained_count: null, delayed_candle_count: null, largest_unexplained_gap_seconds: 0,
+        is_complete: null, quality_status: 'UNVERIFIED', calculation_method: 'OBSERVED', calendar_source: 'UNKNOWN',
+        limitation: 'Completeness unverified because an authoritative calendar is unavailable.', generated_at_utc: '2026-09-04T18:00:00Z', gaps: [] } });
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('#training-progress')?.textContent).toContain('No training job is running');
+    component['dashboardTab'].set('markets');
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).querySelector('.data-quality')?.textContent).toContain('UNVERIFIED');
   });
 
   it('updates chart dimensions only from a non-zero container', () => {

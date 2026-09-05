@@ -299,3 +299,24 @@ def logout_owner(
         connection.commit()
     response.delete_cookie(settings.session_cookie_name, path="/")
     response.delete_cookie(settings.csrf_cookie_name, path="/")
+
+
+def authenticate_session_token(token: str | None, settings: Settings) -> AuthenticatedUser | None:
+    """Authenticate a read-only streaming connection from its secure session cookie."""
+    if not token:
+        return None
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """SELECT u.user_id,u.tenant_id,u.email,u.display_name,u.role
+               FROM app.auth_sessions s
+               JOIN app.users u ON u.user_id=s.user_id AND u.tenant_id=s.tenant_id
+               WHERE s.token_hash=%s AND s.revoked_at_utc IS NULL
+                 AND s.expires_at_utc>SYSUTCDATETIME() AND u.status='active'""",
+            (_token_hash(token),),
+        )
+        row = cursor.fetchone()
+    return None if not row else AuthenticatedUser(
+        user_id=str(row[0]), tenant_id=str(row[1]), email=str(row[2]),
+        display_name=str(row[3]), role=str(row[4]),
+    )

@@ -113,8 +113,6 @@ class IGMarketStream:
         self.client.disconnect()
 
     def on_price(self, update: object) -> None:
-        if update.getValue("CONS_END") != "1":
-            return
         item = str(update.getItemName())
         epic = item.removeprefix("CHART:").removesuffix(":5MINUTE")
         market = self.markets.get(epic)
@@ -129,8 +127,13 @@ class IGMarketStream:
         opened = datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=timezone.utc)
         opened = opened.replace(minute=opened.minute - opened.minute % 5, second=0, microsecond=0)
         ticks = int(_number(update, "LTV") or 0)
+        completed = update.getValue("CONS_END") == "1"
         with self._lock:
-            self._persist(market, opened, values, bid, offer, ticks)
+            self._persist_live(market, opened, values, bid, offer, ticks, completed)
+            if completed:
+                self._persist(market, opened, values, bid, offer, ticks)
+        if not completed:
+            return
         logger.info(
             "completed M5 candle persisted",
             extra={
@@ -139,6 +142,33 @@ class IGMarketStream:
                 "result": market["symbol"],
             },
         )
+
+    def _persist_live(
+        self, market: dict[str, object], opened: datetime, values: list[Decimal],
+        bid: list[Decimal], ask: list[Decimal], ticks: int, completed: bool,
+    ) -> None:
+        """Publish one authoritative mutable candle for browser fan-out."""
+        with open_database(self.settings) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """MERGE app.live_candle_snapshots WITH (HOLDLOCK) AS target
+                   USING (SELECT CONVERT(uniqueidentifier,%s) market_id,'M5' timeframe) source
+                     ON target.market_id=source.market_id AND target.timeframe=source.timeframe
+                   WHEN MATCHED AND %s>=target.open_time_utc THEN UPDATE SET
+                     open_time_utc=%s,[open]=%s,high=%s,low=%s,[close]=%s,
+                     bid_close=%s,ask_close=%s,spread_close=%s,tick_count=%s,
+                     source_event_utc=%s,source_sequence=target.source_sequence+1,
+                     completed=%s,updated_at_utc=SYSUTCDATETIME()
+                   WHEN NOT MATCHED THEN INSERT
+                     (market_id,timeframe,open_time_utc,[open],high,low,[close],bid_close,
+                      ask_close,spread_close,tick_count,source_event_utc,source_sequence,completed)
+                     VALUES(%s,'M5',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s);""",
+                (str(market["market_id"]), opened, opened, *values,
+                 bid[3], ask[3], ask[3] - bid[3], ticks, opened, completed,
+                 str(market["market_id"]), opened, *values, bid[3], ask[3], ask[3] - bid[3],
+                 ticks, opened, completed),
+            )
+            connection.commit()
 
     def _persist(
         self, market: dict[str, object], opened: datetime, values: list[Decimal],

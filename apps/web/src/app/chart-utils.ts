@@ -47,3 +47,19 @@ export function visiblePriceBounds(candles: MarketCandle[], minimumTick: number)
 export function isAtLatest(total: number, start: number, count: number, tolerance = 2): boolean {
   return start + count >= total - tolerance;
 }
+
+export function mergeStreamCandle(candles: MarketCandle[], incoming: MarketCandle): MarketCandle[] {
+  const valid = normalizeCandles([incoming]);
+  if (!valid.length) return candles;
+  const timestamp = Date.parse(incoming.open_time_utc);
+  const latestTimestamp = candles.length ? Date.parse(candles.at(-1)!.open_time_utc) : -Infinity;
+  if (timestamp < latestTimestamp) return candles;
+  const existing = candles.findIndex((item) => item.open_time_utc === incoming.open_time_utc);
+  if (existing >= 0) {
+    if (JSON.stringify(candles[existing]) === JSON.stringify(incoming)) return candles;
+    const result = candles.slice();
+    result[existing] = incoming;
+    return result;
+  }
+  return [...candles, incoming];
+}

@@ -6,6 +6,90 @@ from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database import open_database
+from app.market_calendar import is_regular_session
+
+TIMEFRAME_MINUTES = {"M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+
+
+def _quality_bucket(value: datetime, timeframe: str) -> datetime:
+    if timeframe == "D1":
+        return value.replace(hour=0, minute=0, second=0, microsecond=0)
+    minutes = TIMEFRAME_MINUTES[timeframe]
+    minute_of_day = value.hour * 60 + value.minute
+    bucket_minute = minute_of_day - minute_of_day % minutes
+    return value.replace(hour=bucket_minute // 60, minute=bucket_minute % 60, second=0, microsecond=0)
+
+
+def calculate_history_quality(
+    rows: list[dict[str, object]], *, timeframe: str, requested_start: datetime | None,
+    requested_end: datetime, market: dict[str, object], holidays: set[object], period: str,
+) -> dict[str, object]:
+    """Measure observed gaps without manufacturing candles or overstating calendar authority."""
+    interval = timedelta(minutes=TIMEFRAME_MINUTES[timeframe])
+    observed = sorted(row["open_time_utc"].replace(tzinfo=timezone.utc) for row in rows)
+    actual_start, actual_end = (observed[0], observed[-1]) if observed else (None, None)
+    authoritative = (
+        (str(market["asset_class"]) == "FX" and str(market["calendar_code"]) == "FX_24X5")
+        or str(market["calendar_code"]) == "XETRA_REGULAR"
+    ) and period != "ALL"
+    expected: list[datetime] = []
+    if authoritative and requested_start:
+        point = requested_start.replace(second=0, microsecond=0)
+        expected_buckets: set[datetime] = set()
+        while point <= requested_end:
+            if is_regular_session(
+                point, calendar_code=str(market["calendar_code"]),
+                market_timezone=str(market["market_timezone"]),
+                session_open=market["session_open_local"], session_close=market["session_close_local"],
+                holidays=holidays,
+            ):
+                candidate = _quality_bucket(point, timeframe)
+                if candidate + interval <= requested_end:
+                    expected_buckets.add(candidate)
+            point += timedelta(minutes=5)
+        expected = sorted(expected_buckets)
+    expected_set, observed_set = set(expected), set(observed)
+    missing = sorted(expected_set - observed_set) if authoritative else []
+    internal_missing = [item for item in missing if actual_start and actual_end and actual_start < item < actual_end]
+    not_retained = [item for item in missing if actual_start and item < actual_start]
+    delayed = [item for item in missing if actual_end and item > actual_end]
+    gaps: list[dict[str, object]] = []
+    for left, right in zip(observed, observed[1:]):
+        cursor = left + interval
+        missing_between: list[datetime] = []
+        while cursor < right:
+            if not authoritative or cursor in expected_set:
+                missing_between.append(cursor)
+            cursor += interval
+        if missing_between:
+            gaps.append({
+                "after_utc": left.isoformat(), "before_utc": right.isoformat(),
+                "missing_candles": len(missing_between),
+                "duration_seconds": int((right - left - interval).total_seconds()),
+                "classification": "MISSING_CANDLE" if authoritative else "CALENDAR_UNCERTAINTY",
+            })
+    expected_count = len(expected) if authoritative else None
+    completeness = round(100 * len(expected_set & observed_set) / expected_count, 2) if expected_count else None
+    status = "UNVERIFIED" if not authoritative else "INCOMPLETE" if internal_missing or not_retained else "DELAYED" if delayed else "FRESH"
+    return {
+        "requested_start_utc": _quality_iso(requested_start), "requested_end_utc": _quality_iso(requested_end),
+        "actual_start_utc": _quality_iso(actual_start), "actual_end_utc": _quality_iso(actual_end),
+        "returned_candle_count": len(rows), "expected_candle_count": expected_count,
+        "completeness_percentage": completeness, "gap_count": len(gaps),
+        "missing_candle_count": len(internal_missing) if authoritative else None,
+        "period_not_retained_count": len(not_retained) if authoritative else None,
+        "delayed_candle_count": len(delayed) if authoritative else None,
+        "largest_unexplained_gap_seconds": max((item["duration_seconds"] for item in gaps), default=0),
+        "is_complete": (not missing) if authoritative else None, "quality_status": status,
+        "calculation_method": "SESSION_CALENDAR_EXPECTED_BUCKETS_V1" if authoritative else "OBSERVED_INTERNAL_GAPS_ONLY_V1",
+        "calendar_source": str(market["calendar_code"]),
+        "limitation": None if authoritative else "Completeness unverified because an authoritative calendar is unavailable or retention start is unknown.",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(), "gaps": gaps[:100],
+    }
+
+
+def _quality_iso(value: datetime | None) -> str | None:
+    return value.astimezone(timezone.utc).isoformat() if value else None
 
 
 def read_market_inventory(settings: Settings, tenant_id: str) -> dict[str, object]:
@@ -91,7 +175,8 @@ def read_candles(
     local_today = datetime.now(local_zone).date()
     period_start = local_today if period == "TODAY" else local_today - timedelta(days=6)
     start_utc = datetime.combine(period_start, time.min, tzinfo=local_zone).astimezone(timezone.utc)
-    end_utc = datetime.combine(local_today, time.max, tzinfo=local_zone).astimezone(timezone.utc)
+    end_utc = min(datetime.combine(local_today, time.max, tzinfo=local_zone).astimezone(timezone.utc),
+                  datetime.now(timezone.utc))
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
@@ -101,11 +186,15 @@ def read_candles(
         if not cursor.fetchone():
             raise PermissionError("Tenant has no trading account")
         cursor.execute(
-            "SELECT 1 AS supported FROM app.markets WHERE symbol=%s AND enabled=1 AND research_enabled=1",
+            """SELECT market_id,asset_class,calendar_code,market_timezone,session_open_local,session_close_local
+               FROM app.markets WHERE symbol=%s AND enabled=1 AND research_enabled=1""",
             (symbol,),
         )
-        if not cursor.fetchone():
+        market = cursor.fetchone()
+        if not market:
             raise ValueError("Unsupported market")
+        cursor.execute("SELECT holiday_date FROM app.market_holidays WHERE calendar_code=%s", (market["calendar_code"],))
+        holidays = {row["holiday_date"] for row in cursor.fetchall()}
         source_timeframe = timeframe if timeframe in {"M5", "M15"} else "M15"
         multiplier = {"M30": 2, "H1": 4, "H4": 16, "D1": 96}.get(timeframe, 1)
         source_limit = min(10000, limit * multiplier + multiplier)
@@ -126,12 +215,17 @@ def read_candles(
         rows = _aggregate_rows(rows, timeframe)[-limit:]
     else:
         rows = rows[-limit:]
+    quality = calculate_history_quality(
+        rows, timeframe=timeframe, requested_start=None if period == "ALL" else start_utc,
+        requested_end=end_utc, market=market, holidays=holidays, period=period,
+    )
     return {
         "symbol": symbol,
         "timeframe": timeframe,
         "timezone": "Africa/Johannesburg",
         "session_date": local_today.isoformat(),
         "period": period,
+        "quality": quality,
         "candles": [
             {
                 "open_time_utc": row["open_time_utc"].replace(tzinfo=timezone.utc).isoformat(),

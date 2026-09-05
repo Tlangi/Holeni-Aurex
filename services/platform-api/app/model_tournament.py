@@ -355,7 +355,9 @@ def run_and_record_selective_tournament(
              str(lineage["research_target_spec_id"]), PROTOCOL_VERSION),
         )
         connection.commit()
-    return {"experiment_id": experiment_id, **outcome}
+    return {"experiment_id": experiment_id, **outcome,
+            "development_rows": len(frame), "configuration_hash": configuration_hash,
+            "feature_version": str(market["features_version"] or FEATURE_VERSION)}
 
 
 def _feature_importance(model: object) -> list[dict[str, float | str]]:

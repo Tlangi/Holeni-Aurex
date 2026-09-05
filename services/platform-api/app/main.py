@@ -3,7 +3,7 @@ import logging
 from threading import Lock
 from typing import AsyncIterator
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Request, Response, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.encoders import jsonable_encoder
@@ -80,6 +80,7 @@ from app.research_jobs import (
     enqueue_protocol_audit,
     enqueue_selective_tournament,
     read_research_jobs,
+    read_research_job_detail,
 )
 from app.research_service import ResearchReplayRequest, read_research_status, run_research_replay
 from app.model_tournament import ModelTournamentRequest, run_and_record_tournament
@@ -89,6 +90,7 @@ from app.trading_controls import (
     EngineControlRequest, StrategyStatusRequest, change_engine_control,
     change_strategy_status, read_strategies,
 )
+from app.realtime import market_websocket, training_websocket
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -156,6 +158,18 @@ app.add_middleware(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 app.add_middleware(SameOriginMutationMiddleware, allowed_origins=settings.allowed_origins)
 app.add_middleware(CorrelationLoggingMiddleware)
+
+
+@app.websocket("/api/v1/stream/market")
+async def market_stream(websocket: WebSocket) -> None:
+    """Authenticated, same-origin, read-only live candle fan-out."""
+    await market_websocket(websocket, settings)
+
+
+@app.websocket("/api/v1/stream/training")
+async def training_stream(websocket: WebSocket) -> None:
+    """Authenticated, same-origin training-status events; never starts a job."""
+    await training_websocket(websocket, settings)
 
 
 @app.post("/api/v1/auth/login", tags=["authentication"])
@@ -309,6 +323,15 @@ def research_evidence_sync(
 @app.get("/api/v1/research/jobs", tags=["research"])
 def research_job_status(limit: int = 20, user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     return JSONResponse(content=read_research_jobs(settings, user.tenant_id, limit))
+
+
+@app.get("/api/v1/research/jobs/{job_id}", tags=["research"])
+def research_job_detail(job_id: str, user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Read persisted progress and phase history; never starts or mutates training."""
+    try:
+        return JSONResponse(content=read_research_job_detail(settings, user.tenant_id, job_id))
+    except ValueError as exc:
+        return JSONResponse(content={"status": "not_found", "message": str(exc)}, status_code=404)
 
 
 @app.post("/api/v1/research/protocol/audit", tags=["research"])

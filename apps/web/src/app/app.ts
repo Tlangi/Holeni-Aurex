@@ -1,11 +1,11 @@
 import { afterNextRender, Component, computed, DestroyRef, ElementRef, inject, signal, ViewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
+import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, ResearchJobsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
 import { AuthApi } from './auth-api';
 import { Router } from '@angular/router';
 import { catchError, finalize, map, of, Subject, switchMap } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { clampWindow, isAtLatest, latestWindow, normalizeCandles, recommendedCandleCount, visiblePriceBounds } from './chart-utils';
+import { clampWindow, isAtLatest, latestWindow, mergeStreamCandle, normalizeCandles, recommendedCandleCount, visiblePriceBounds } from './chart-utils';
 
 interface NavigationItem {
   label: string;
@@ -51,6 +51,11 @@ export class DashboardComponent {
   protected readonly marketLoading = signal(true);
   protected readonly marketError = signal('');
   protected readonly marketLastUpdated = signal<Date | null>(null);
+  protected readonly streamState = signal<'CONNECTING' | 'LIVE' | 'RECONNECTING' | 'DELAYED' | 'OFFLINE' | 'POLLING_FALLBACK'>('CONNECTING');
+  protected readonly streamLatencyMs = signal<number | null>(null);
+  protected readonly lastStreamUpdate = signal<Date | null>(null);
+  protected readonly researchJobs = signal<ResearchJobsData | null>(null);
+  protected readonly trainingStreamState = signal<'CONNECTING' | 'LIVE' | 'POLLING_FALLBACK'>('CONNECTING');
   protected readonly tradeHistory = signal<TradeHistoryData | null>(null);
   protected readonly tradingReadiness = signal<TradingReadinessData | null>(null);
   protected readonly modelReadiness = signal<ModelReadinessData | null>(null);
@@ -89,6 +94,13 @@ export class DashboardComponent {
   private chartResizeObserver?: ResizeObserver;
   private resizeFrame: number | null = null;
   private marketRefreshTimer: number | null = null;
+  private trainingRefreshTimer: number | null = null;
+  private marketSocket: WebSocket | null = null;
+  private trainingSocket: WebSocket | null = null;
+  private marketReconnectTimer: number | null = null;
+  private trainingReconnectTimer: number | null = null;
+  private marketReconnectAttempt = 0;
+  private marketStreamGeneration = 0;
   private chartPointerId: number | null = null;
   private readonly chartPointers = new Map<number, { x: number; y: number }>();
   private chartPinchDistance: number | null = null;
@@ -236,11 +248,17 @@ export class DashboardComponent {
         this.chartVisibleStart.set(window.start);
         this.chartVisibleCount.set(window.count);
       }
+      this.connectMarketStream();
     });
     this.destroyRef.onDestroy(() => {
       this.chartResizeObserver?.disconnect();
       if (this.resizeFrame !== null) cancelAnimationFrame(this.resizeFrame);
       if (this.marketRefreshTimer !== null) window.clearInterval(this.marketRefreshTimer);
+      if (this.trainingRefreshTimer !== null) window.clearInterval(this.trainingRefreshTimer);
+      if (this.marketReconnectTimer !== null) window.clearTimeout(this.marketReconnectTimer);
+      if (this.trainingReconnectTimer !== null) window.clearTimeout(this.trainingReconnectTimer);
+      this.marketSocket?.close(1000, 'component destroyed');
+      this.trainingSocket?.close(1000, 'component destroyed');
     });
     afterNextRender(() => {
       this.loadDashboard(false);
@@ -249,8 +267,13 @@ export class DashboardComponent {
       this.loadTradeHistory();
       this.loadTradingReadiness();
       this.loadTradingOperations();
+      this.loadResearchJobs();
+      this.connectTrainingStream();
       this.marketRefreshTimer = window.setInterval(() => {
-        if (this.dashboardTab() === 'markets' && !this.marketLoading()) this.loadMarket();
+        if (this.dashboardTab() === 'markets' && !this.marketLoading() && this.streamState() !== 'LIVE') this.loadMarket();
+      }, 120_000);
+      this.trainingRefreshTimer = window.setInterval(() => {
+        if (this.trainingStreamState() !== 'LIVE') this.loadResearchJobs();
       }, 30_000);
     });
   }
@@ -258,13 +281,27 @@ export class DashboardComponent {
   protected selectMarket(symbol: string): void {
     if (symbol === this.selectedMarket()) return;
     this.selectedMarket.set(symbol);
+    this.disconnectMarketStream();
     this.loadMarket();
   }
 
   protected selectTimeframe(timeframe: string): void {
     if (timeframe === this.selectedTimeframe()) return;
     this.selectedTimeframe.set(timeframe);
+    this.disconnectMarketStream();
     this.loadMarket();
+  }
+
+  protected trainingPercent(): number | null {
+    const job = this.researchJobs()?.active_job ?? this.researchJobs()?.latest_successful_job;
+    if (!job?.total_work_units || job.completed_work_units === null) return null;
+    return Math.min(100, Math.max(0, Math.round(job.completed_work_units * 100 / job.total_work_units)));
+  }
+
+  protected durationLabel(seconds: number | null | undefined): string {
+    if (seconds === null || seconds === undefined) return '—';
+    const hours = Math.floor(seconds / 3600), minutes = Math.floor((seconds % 3600) / 60), secs = seconds % 60;
+    return hours ? `${hours}h ${minutes}m` : minutes ? `${minutes}m ${secs}s` : `${secs}s`;
   }
 
   protected selectPeriod(period: string): void {
@@ -606,6 +643,110 @@ export class DashboardComponent {
     this.marketRequests.next({
       symbol: this.selectedMarket(), timeframe: this.selectedTimeframe(), period: this.selectedPeriod(),
     });
+  }
+
+  private websocketUrl(path: string): string {
+    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${scheme}//${window.location.host}${path}`;
+  }
+
+  private disconnectMarketStream(): void {
+    this.marketStreamGeneration += 1;
+    if (this.marketReconnectTimer !== null) window.clearTimeout(this.marketReconnectTimer);
+    this.marketReconnectTimer = null;
+    const socket = this.marketSocket;
+    this.marketSocket = null;
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'subscription changed');
+  }
+
+  private connectMarketStream(): void {
+    if (typeof WebSocket === 'undefined' || !this.marketData()) {
+      this.streamState.set('POLLING_FALLBACK');
+      return;
+    }
+    this.disconnectMarketStream();
+    const generation = this.marketStreamGeneration;
+    const symbol = this.selectedMarket(), timeframe = this.selectedTimeframe();
+    this.streamState.set(this.marketReconnectAttempt ? 'RECONNECTING' : 'CONNECTING');
+    const socket = new WebSocket(this.websocketUrl(`/api/v1/stream/market?market=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`));
+    this.marketSocket = socket;
+    socket.onopen = () => {
+      if (generation !== this.marketStreamGeneration) return socket.close();
+      this.marketReconnectAttempt = 0;
+      this.streamState.set('LIVE');
+    };
+    socket.onmessage = (event) => {
+      if (generation !== this.marketStreamGeneration || socket !== this.marketSocket || typeof event.data !== 'string' || event.data.length > 65_536) return;
+      try {
+        const message = JSON.parse(event.data) as { type: string; streamed_at_utc?: string; candle?: MarketCandle; symbol?: string; timeframe?: string };
+        if (message.type !== 'candle' || !message.candle || message.symbol !== symbol || message.timeframe !== timeframe) return;
+        this.applyStreamCandle(message.candle);
+        const received = new Date();
+        this.lastStreamUpdate.set(received);
+        this.marketLastUpdated.set(received);
+        this.streamLatencyMs.set(message.streamed_at_utc ? Math.max(0, received.getTime() - Date.parse(message.streamed_at_utc)) : null);
+        this.streamState.set('LIVE');
+      } catch { /* malformed stream messages cannot replace valid chart data */ }
+    };
+    socket.onerror = () => this.streamState.set('DELAYED');
+    socket.onclose = () => {
+      if (generation !== this.marketStreamGeneration || socket !== this.marketSocket) return;
+      this.marketSocket = null;
+      this.streamState.set('POLLING_FALLBACK');
+      this.marketReconnectAttempt += 1;
+      const base = Math.min(30_000, 1000 * 2 ** Math.min(this.marketReconnectAttempt, 5));
+      const delay = Math.round(base * (0.8 + Math.random() * 0.4));
+      this.marketReconnectTimer = window.setTimeout(() => {
+        this.loadMarket(); // reconcile the baseline before attaching the replacement stream
+      }, delay);
+    };
+  }
+
+  private applyStreamCandle(incoming: MarketCandle): void {
+    const current = this.marketData();
+    if (!current || !Number.isFinite(Date.parse(incoming.open_time_utc))) return;
+    const before = current.candles.length;
+    const candles = mergeStreamCandle(current.candles, incoming);
+    if (candles === current.candles) return;
+    this.marketData.set({ ...current, candles });
+    if (this.autoFollowLatest()) this.goToLatest();
+    else if (candles.length !== before) {
+      const window = clampWindow(candles.length, this.chartVisibleStart(), this.chartVisibleCount());
+      this.chartVisibleStart.set(window.start);
+      this.chartVisibleCount.set(window.count);
+    }
+  }
+
+  private loadResearchJobs(): void {
+    this.dashboardApi.researchJobs().subscribe({
+      next: (data) => this.researchJobs.set(data),
+      error: () => { if (!this.researchJobs()) this.trainingStreamState.set('POLLING_FALLBACK'); },
+    });
+  }
+
+  private connectTrainingStream(): void {
+    if (typeof WebSocket === 'undefined') {
+      this.trainingStreamState.set('POLLING_FALLBACK');
+      return;
+    }
+    this.trainingSocket?.close(1000, 'reconnect');
+    this.trainingStreamState.set('CONNECTING');
+    const socket = new WebSocket(this.websocketUrl('/api/v1/stream/training'));
+    this.trainingSocket = socket;
+    socket.onopen = () => this.trainingStreamState.set('LIVE');
+    socket.onmessage = (event) => {
+      if (socket !== this.trainingSocket || typeof event.data !== 'string' || event.data.length > 131_072) return;
+      try {
+        const message = JSON.parse(event.data) as { type: string; data?: ResearchJobsData };
+        if (message.type === 'training_status' && message.data) this.researchJobs.set(message.data);
+      } catch { /* preserve the last persisted status */ }
+    };
+    socket.onclose = () => {
+      if (socket !== this.trainingSocket) return;
+      this.trainingSocket = null;
+      this.trainingStreamState.set('POLLING_FALLBACK');
+      this.trainingReconnectTimer = window.setTimeout(() => this.connectTrainingStream(), 10_000);
+    };
   }
 
   private loadMarketInventory(): void {

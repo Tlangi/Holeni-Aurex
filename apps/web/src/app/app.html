@@ -168,6 +168,28 @@
         </div>
       </section>
 
+      <section class="panel training-progress-panel" id="training-progress" [hidden]="dashboardTab() !== 'research'">
+        <div class="panel-header"><div><h2>Training progress</h2><p>Persisted governed-job progress. Completion never validates a model or enables trading.</p></div><span class="record-count">{{ trainingStreamState() }}</span></div>
+        @if (researchJobs()?.active_job ?? researchJobs()?.latest_successful_job; as job) {
+          <div class="training-head"><div><strong>{{ job.effective_status }}</strong><span>{{ job.market ?? 'Platform' }} · {{ job.timeframe ?? '—' }} · {{ job.model_family ?? job.job_type }}</span></div><em>{{ trainingPercent() === null ? 'Progress unavailable' : trainingPercent() + '%' }}</em></div>
+          @if (trainingPercent() !== null) { <div class="training-track" role="progressbar" [attr.aria-valuenow]="trainingPercent()" aria-valuemin="0" aria-valuemax="100"><i [style.width.%]="trainingPercent()"></i></div> }
+          <dl class="training-facts">
+            <div><dt>Current phase</dt><dd>{{ job.current_phase ?? job.progress_message ?? '—' }}{{ job.phase_number ? ' · ' + job.phase_number + '/' + job.total_phases : '' }}</dd></div>
+            <div><dt>Elapsed</dt><dd>{{ durationLabel(job.elapsed_seconds) }}</dd></div>
+            <div><dt>Estimated remaining</dt><dd>{{ job.eta_seconds === null ? 'Not enough progress to estimate' : durationLabel(job.eta_seconds) }}</dd></div>
+            <div><dt>ETA confidence</dt><dd>{{ job.eta_confidence ?? 'UNAVAILABLE' }}</dd></div>
+            <div><dt>Work units</dt><dd>{{ job.completed_work_units ?? '—' }} / {{ job.total_work_units ?? '—' }}</dd></div>
+            <div><dt>Last heartbeat</dt><dd>{{ job.last_heartbeat_utc ? (job.last_heartbeat_utc | date:'dd MMM, HH:mm:ss':'Africa/Johannesburg') + ' SAST' : 'Not recorded by legacy job' }}</dd></div>
+            <div><dt>Folds / candidates / trials</dt><dd>{{ job.folds_completed ?? '—' }}/{{ job.total_folds ?? '—' }} · {{ job.candidates_completed ?? '—' }}/{{ job.total_candidates ?? '—' }} · {{ job.trials_completed ?? '—' }}/{{ job.total_trials ?? '—' }}</dd></div>
+            <div><dt>Lifecycle result</dt><dd>No automatic validation or promotion</dd></div>
+          </dl>
+          @if (job.warning_message || job.error_message) { <div class="chart-notice error">{{ job.warning_message ?? job.error_message }}</div> }
+          <p class="governance-notice">Training completed ≠ model validated. Model validated ≠ trading enabled. Holdout, shadow evidence and promotion remain separate gates.</p>
+        } @else {
+          <div class="history-empty"><strong>No training job is running</strong><span>No evidence-based remaining time is available. The next job starts only through the approved governed research workflow.</span></div>
+        }
+      </section>
+
       <section class="panel model-readiness-panel" id="forward-evidence" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Forward evidence</h2><p>Immutable observations captured from completed M15 candles. Accumulation never overrides validation or risk gates.</p></div><span class="record-count">{{ forwardEvidence()?.snapshots?.length ?? 0 }} observations</span></div>
         <div class="model-readiness-grid">
@@ -284,7 +306,7 @@
             <div class="live-price"><span>{{ selectedMarket() }} · {{ selectedTimeframe() }}</span><strong>{{ candleChart().latestPrice }}</strong><em [class.negative]="!candleChart().positive">{{ candleChart().change }}</em></div>
             <div class="ohlc-strip"><span><small>Period open</small><strong>{{ candleChart().openPrice }}</strong></span><span><small>Period high</small><strong>{{ candleChart().highPrice }}</strong></span><span><small>Period low</small><strong>{{ candleChart().lowPrice }}</strong></span><span><small>Requested / visible</small><strong>{{ selectedPeriod() }} · {{ chartVisibleCount() }} of {{ marketData()?.candles?.length ?? 0 }}</strong></span><span><small>Last updated SAST</small><strong>{{ marketLastUpdated() | date:'dd MMM, HH:mm:ss':'Africa/Johannesburg' }}</strong></span></div>
           </div>
-          <div class="chart-status-line"><span>{{ autoFollowLatest() ? 'Following latest candle' : 'Viewing historical candles' }}</span><span [class.stale]="chartIsStale()">{{ chartIsStale() ? 'Data may be stale' : 'Latest completed candle · ' + candleChart().latestLabel + ' SAST' }}</span></div>
+          <div class="chart-status-line"><span><strong class="stream-state" [class.live]="streamState() === 'LIVE'">{{ streamState() }}</strong> · {{ autoFollowLatest() ? 'Following latest candle' : 'Viewing historical candles' }}</span><span [class.stale]="chartIsStale()">{{ chartIsStale() ? 'Data may be stale' : 'Latest candle · ' + candleChart().latestLabel + ' SAST' }}{{ streamLatencyMs() === null ? '' : ' · ' + streamLatencyMs() + ' ms stream latency' }}</span></div>
           <p class="chart-scroll-hint">Drag or swipe horizontally to browse history. Use the mouse wheel or zoom controls to change the visible range.</p>
           <div class="candle-chart-stage">
           <div #chartViewport class="candle-chart-wrap" [class.dragging]="chartDragging()" tabindex="0"
@@ -316,8 +338,8 @@
                 <strong>{{ candle.open_time_utc | date:'dd MMM yyyy, HH:mm':'Africa/Johannesburg' }} SAST</strong>
                 <span>O {{ candle.open }} · H {{ candle.high }}</span><span>L {{ candle.low }} · C {{ candle.close }}</span>
                 <small>{{ candle.bid_close && candle.ask_close ? 'Bid ' + candle.bid_close + ' · Ask ' + candle.ask_close : 'Mid-price OHLC' }}</small>
-              </div>
-            }
+          </div>
+        }
           </div>
           <div class="fixed-price-axis" aria-hidden="true">
             <strong>Price</strong>
@@ -333,6 +355,13 @@
           </div>
           </div>
           <div class="chart-legend"><span><i class="legend-up"></i>Price up</span><span><i class="legend-down"></i>Price down</span></div>
+          @if (marketData()?.quality; as quality) {
+            <details class="data-quality"><summary><span>Data quality: <strong>{{ quality.quality_status }}</strong></span><small>{{ quality.returned_candle_count }} candles retrieved · {{ quality.gap_count }} unexplained gaps</small></summary>
+              <dl><div><dt>Requested period</dt><dd>{{ quality.requested_start_utc ? (quality.requested_start_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : 'Retention history' }} → {{ quality.requested_end_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }}</dd></div><div><dt>Available period</dt><dd>{{ quality.actual_start_utc ? (quality.actual_start_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : 'No candles' }} → {{ quality.actual_end_utc ? (quality.actual_end_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : '—' }}</dd></div><div><dt>Expected / missing</dt><dd>{{ quality.expected_candle_count ?? 'Unverified' }} / {{ quality.missing_candle_count ?? 'Unverified' }}</dd></div><div><dt>Not retained / delayed</dt><dd>{{ quality.period_not_retained_count ?? 'Unverified' }} / {{ quality.delayed_candle_count ?? 'Unverified' }}</dd></div><div><dt>Completeness</dt><dd>{{ quality.completeness_percentage === null ? 'Unverified' : quality.completeness_percentage + '%' }}</dd></div><div><dt>Largest gap</dt><dd>{{ durationLabel(quality.largest_unexplained_gap_seconds) }}</dd></div><div><dt>Calendar</dt><dd>{{ quality.calendar_source }}</dd></div></dl>
+              @if (quality.limitation) { <p>{{ quality.limitation }}</p> }
+              @for (gap of quality.gaps.slice(0, 12); track gap.after_utc) { <p class="gap-detail">{{ gap.classification }} · {{ gap.after_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }} → {{ gap.before_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }} · {{ gap.missing_candles }} candles</p> }
+            </details>
+          }
         }
       </section>
 

@@ -63,6 +63,20 @@ export interface MarketCandle {
   is_regular_session: boolean;
   tick_count: number;
   source: string;
+  completed?: boolean;
+}
+
+export interface MarketHistoryQuality {
+  requested_start_utc: string | null; requested_end_utc: string;
+  actual_start_utc: string | null; actual_end_utc: string | null;
+  returned_candle_count: number; expected_candle_count: number | null;
+  completeness_percentage: number | null; gap_count: number;
+  missing_candle_count: number | null; largest_unexplained_gap_seconds: number;
+  period_not_retained_count: number | null; delayed_candle_count: number | null;
+  is_complete: boolean | null; quality_status: 'FRESH' | 'DELAYED' | 'INCOMPLETE' | 'FAILED' | 'UNVERIFIED';
+  calculation_method: string; calendar_source: string; limitation: string | null;
+  generated_at_utc: string;
+  gaps: Array<{ after_utc: string; before_utc: string; missing_candles: number; duration_seconds: number; classification: string }>;
 }
 
 export interface MarketCandlesData {
@@ -72,6 +86,25 @@ export interface MarketCandlesData {
   session_date: string | null;
   period: 'TODAY' | '7D' | 'ALL';
   candles: MarketCandle[];
+  quality?: MarketHistoryQuality;
+}
+
+export interface ResearchJob {
+  research_job_id: string; job_type: string; status: string; effective_status: string;
+  market: string | null; timeframe: string | null; model_family: string | null;
+  current_phase: string | null; phase_number: number | null; total_phases: number | null;
+  completed_work_units: number | null; total_work_units: number | null;
+  records_processed: number | null; folds_completed: number | null; total_folds: number | null;
+  candidates_completed: number | null; total_candidates: number | null; trials_completed: number | null; total_trials: number | null;
+  progress_message: string | null; warning_message: string | null; error_message: string | null;
+  created_at_utc: string; started_at_utc: string | null; completed_at_utc: string | null;
+  last_heartbeat_utc: string | null; elapsed_seconds: number | null; eta_seconds: number | null;
+  eta_confidence: string | null; eta_basis: string | null; feature_version: string | null; dataset_identifier: string | null;
+}
+
+export interface ResearchJobsData {
+  active_job: ResearchJob | null; latest_successful_job: ResearchJob | null; jobs: ResearchJob[];
+  system_status: string; stale_after_seconds: number; execution_enabled: false; governance_notice: string;
 }
 
 export interface MarketInventoryData {
@@ -855,6 +888,10 @@ export class DashboardApi {
 
   modelValidation(): Observable<ModelValidationData> {
     return this.http.get<ModelValidationData>('/api/v1/models/validation');
+  }
+
+  researchJobs(): Observable<ResearchJobsData> {
+    return this.http.get<ResearchJobsData>('/api/v1/research/jobs', { params: { limit: 20 } });
   }
 
   replayRuns(): Observable<ReplayRunsData> {

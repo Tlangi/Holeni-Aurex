@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampWindow, isAtLatest, latestWindow, normalizeCandles, recommendedCandleCount, visiblePriceBounds } from './chart-utils';
+import { clampWindow, isAtLatest, latestWindow, mergeStreamCandle, normalizeCandles, recommendedCandleCount, visiblePriceBounds } from './chart-utils';
 import { MarketCandle } from './dashboard-api';
 
 function candle(time: string, open: number, high: number, low: number, close: number): MarketCandle {
@@ -45,5 +45,25 @@ describe('candlestick viewport utilities', () => {
     expect(clampWindow(1000, 990, 100)).toEqual({ start: 900, count: 100 });
     expect(isAtLatest(1000, 900, 100)).toBe(true);
     expect(isAtLatest(1000, 700, 100)).toBe(false);
+  });
+
+  it('mutates the active streamed candle without rebuilding the series', () => {
+    const first = candle('2026-09-01T00:00:00Z', 1, 2, .5, 1.5);
+    const active = candle('2026-09-01T00:05:00Z', 1.5, 2, 1, 1.8);
+    const updated = candle('2026-09-01T00:05:00Z', 1.5, 2.2, .9, 2.1);
+    const result = mergeStreamCandle([first, active], updated);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe(first);
+    expect(result[1]).toBe(updated);
+  });
+
+  it('appends one new candle and rejects stale or duplicate stream events', () => {
+    const first = candle('2026-09-01T00:00:00Z', 1, 2, .5, 1.5);
+    const second = candle('2026-09-01T00:05:00Z', 1.5, 2, 1, 1.8);
+    const next = candle('2026-09-01T00:10:00Z', 1.8, 2.1, 1.7, 2);
+    const appended = mergeStreamCandle([first, second], next);
+    expect(appended).toHaveLength(3);
+    expect(mergeStreamCandle(appended, first)).toBe(appended);
+    expect(mergeStreamCandle(appended, next)).toBe(appended);
   });
 });
