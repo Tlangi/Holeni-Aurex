@@ -57,7 +57,7 @@ def schedule_bounded_recovery_jobs(
                 transient_retry = (
                     force_transient_retry and current["status"] == "FAILED" and
                     str(current.get("last_error_code") or "") in
-                    {"IG_UNREACHABLE", "IG_DEMO_UNAVAILABLE", "IGDemoUnavailable"}
+                    {"IG_UNREACHABLE", "IG_DEMO_UNAVAILABLE", "IGDemoUnavailable", "DATA_UNAVAILABLE"}
                 )
                 should_requeue = (current["status"] in {"SESSION_DEFERRED", "COMPLETED"}
                                   or transient_retry) and session.should_receive_data

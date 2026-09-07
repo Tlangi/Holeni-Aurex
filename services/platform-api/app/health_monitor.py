@@ -108,10 +108,12 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                 # Feed health follows the current streaming heartbeat. Completed
                 # candles remain the authority for models and execution, but IG's
                 # CONS_END marker can lag while current price updates are healthy.
-                feed_latest = market["live_latest"] if (
+                live_latest = market["live_latest"] if (
                     market["live_updated"] is not None
                     and market["live_updated"] >= now - timedelta(seconds=settings.execution_m5_fresh_seconds)
-                ) else latest
+                ) else None
+                feed_latest = max((value for value in (latest, live_latest) if value is not None),
+                                  default=None)
                 if market_data_stale(
                     feed_latest, now_utc=now.replace(tzinfo=timezone.utc), session=session,
                     freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),

@@ -35,7 +35,7 @@ class _ConnectionListener:
             extra={"worker": "market_stream", "operation": "ig.stream.connection", "result": status},
         )
         self.feed._component("CURRENT" if status.startswith("CONNECTED") else "DEGRADED",
-                             f"IG Lightstreamer {status}")
+                             f"IG Lightstreamer {status}", include_ig_demo=True)
 
     def onServerError(self, code: int, message: str) -> None:
         logger.error("IG streaming server error", extra={"operation": "ig.stream", "result": str(code)})
@@ -260,14 +260,16 @@ class IGMarketStream:
                 connection.rollback()
                 logger.exception("Failed to persist IG streaming candle")
 
-    def _component(self, status: str, detail: str) -> None:
+    def _component(self, status: str, detail: str, *, include_ig_demo: bool = False) -> None:
         try:
             with open_database(self.settings) as connection:
                 cursor = connection.cursor()
                 cursor.execute(
                     """UPDATE app.platform_components SET status=%s,status_detail=%s,
-                       checked_at_utc=SYSUTCDATETIME() WHERE component_code='market_feed'""",
-                    (status, detail[:300]),
+                       checked_at_utc=SYSUTCDATETIME()
+                       WHERE component_code='market_feed'
+                          OR (%s=1 AND component_code='ig_demo')""",
+                    (status, detail[:300], int(include_ig_demo)),
                 )
                 connection.commit()
         except Exception:

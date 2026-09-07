@@ -96,3 +96,23 @@ def test_transaction_history_rejects_unbounded_or_invalid_dates() -> None:
         client.transactions(from_date="2026-09-02", to_date="2026-09-01")
     with pytest.raises(ValueError):
         client.transactions(from_date="not-a-date", to_date="2026-09-01")
+
+
+def test_historical_range_uses_broker_proven_price_timezone() -> None:
+    client = object.__new__(IGDemoClient)
+    calls: list[dict[str, object]] = []
+    def fake_get(path: str, *, version: str, params: dict[str, object]):
+        calls.append(params)
+        if len(calls) == 1:
+            return {"prices": [{"snapshotTimeUTC": "2026-09-07T13:25:00",
+                                "snapshotTime": "2026/09/07 21:25:00"}]}
+        return {"prices": [{"snapshotTimeUTC": "2026-09-07T13:30:00"}]}
+    client._get_params = fake_get
+    rows = client.historical_prices_range(
+        "CS.D.USDJPY.CFD.IP",
+        start_utc=datetime(2026, 9, 7, 13, 25, tzinfo=timezone.utc),
+        end_utc=datetime(2026, 9, 7, 13, 35, tzinfo=timezone.utc), page_size=3,
+    )
+    assert len(rows) == 1
+    assert calls[1]["from"] == "2026-09-07T21:25:00"
+    assert calls[1]["to"] == "2026-09-07T21:35:00"

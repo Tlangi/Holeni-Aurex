@@ -234,13 +234,43 @@ class IGDemoClient:
         end = end_utc.astimezone(timezone.utc)
         if start > end or (end - start).total_seconds() > 7 * 24 * 3600:
             raise ValueError("Historical recovery window must be chronological and no longer than seven days")
+        # IG interprets v3 ``from``/``to`` in the account's price timezone,
+        # even though returned rows also include an unambiguous UTC timestamp.
+        # Resolve the offset from a broker-supplied timestamp pair; never infer
+        # it from the server or machine timezone.
+        probe = self._get_params(
+            f"/prices/{epic}", version="3",
+            params={"resolution": resolution, "pageSize": 1, "pageNumber": 1},
+        )
+        probe_rows = list(probe.get("prices") or [])
+        if not probe_rows:
+            raise IGDemoUnavailable("IG demo did not expose price timezone evidence",
+                                    error_code="PRICE_TIMEZONE_UNAVAILABLE")
+        utc_text = str(probe_rows[0].get("snapshotTimeUTC") or "")
+        local_text = str(probe_rows[0].get("snapshotTime") or "")
+        try:
+            utc_probe = datetime.fromisoformat(utc_text).replace(tzinfo=None)
+            local_probe = datetime.strptime(local_text, "%Y/%m/%d %H:%M:%S")
+        except ValueError as exc:
+            raise IGDemoUnavailable("IG demo returned invalid price timezone evidence",
+                                    error_code="PRICE_TIMEZONE_INVALID") from exc
+        price_offset = local_probe - utc_probe
+        if abs(price_offset.total_seconds()) > 14 * 3600 or price_offset.total_seconds() % 900:
+            raise IGDemoUnavailable("IG demo returned implausible price timezone evidence",
+                                    error_code="PRICE_TIMEZONE_INVALID")
+        local_start = start.replace(tzinfo=None) + price_offset
+        local_end = end.replace(tzinfo=None) + price_offset
         payload = self._get_params(
             f"/prices/{epic}", version="3",
-            params={"resolution": resolution, "from": start.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "to": end.strftime("%Y-%m-%dT%H:%M:%S"), "pageSize": page_size,
+            params={"resolution": resolution, "from": local_start.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "to": local_end.strftime("%Y-%m-%dT%H:%M:%S"), "pageSize": page_size,
                     "pageNumber": 1},
         )
-        return list(payload.get("prices") or [])
+        prices = list(payload.get("prices") or [])
+        return [row for row in prices if row.get("snapshotTimeUTC") and
+                start.replace(tzinfo=None) <= datetime.fromisoformat(
+                    str(row["snapshotTimeUTC"]),
+                ).replace(tzinfo=None) <= end.replace(tzinfo=None)]
 
     def market_details(self, epic: str) -> dict[str, Any]:
         """Return broker dealing rules for one allow-listed demo CFD epic."""
