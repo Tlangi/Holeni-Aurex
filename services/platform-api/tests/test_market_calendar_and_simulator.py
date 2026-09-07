@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from app.execution_simulator import resolve_candle_exit, spread_cost, transaction_cost_evidence
 from app.market_calendar import is_regular_session, market_data_stale, operational_session_state
+from app.streaming import IGMarketStream
 
 
 def test_germany_regular_session_uses_berlin_dst() -> None:
@@ -100,6 +101,46 @@ def test_stale_data_only_warns_when_session_should_be_producing() -> None:
     assert market_data_stale(
         latest, now_utc=now, session=opened, freshness=timedelta(minutes=15),
     )
+
+
+def test_stream_watchdog_restarts_only_during_an_open_market() -> None:
+    stream = object.__new__(IGMarketStream)
+    stream.started_at = datetime(2026, 8, 31, 7, 0, tzinfo=timezone.utc)
+    stream.last_update_at = datetime(2026, 8, 31, 7, 5, tzinfo=timezone.utc)
+    stream.markets = {
+        "IX.D.DAX.BMU.IP": {
+            "calendar_code": "XETRA_REGULAR", "timezone": "Europe/Berlin",
+            "open": time(9), "close": time(17, 30), "holidays": set(),
+        },
+    }
+    assert stream.stalled(now_utc=datetime(2026, 8, 31, 7, 30, tzinfo=timezone.utc))
+    assert not stream.stalled(now_utc=datetime(2026, 8, 30, 7, 30, tzinfo=timezone.utc))
+
+
+def test_stream_finalizes_previous_bucket_on_rollover() -> None:
+    stream = object.__new__(IGMarketStream)
+    stream._pending = {}
+    stream._lock = __import__("threading").Lock()
+    stream.markets = {"EPIC": {"symbol": "TEST"}}
+    stream.last_update_at = None
+    persisted: list[datetime] = []
+    stream._persist_live = lambda *_: None
+    stream._persist = lambda _market, opened, *_: persisted.append(opened)
+
+    class Update:
+        values = {"UTM": "1788163200000", "BID_OPEN": "1", "BID_HIGH": "2",
+                  "BID_LOW": "0.5", "BID_CLOSE": "1.5", "OFR_OPEN": "1.1",
+                  "OFR_HIGH": "2.1", "OFR_LOW": "0.6", "OFR_CLOSE": "1.6",
+                  "LTV": "1", "CONS_END": "0"}
+        def getValue(self, name: str) -> str: return self.values[name]
+        def getItemName(self) -> str: return "CHART:EPIC:5MINUTE"
+
+    first = Update()
+    stream.on_price(first)
+    second = Update()
+    second.values = {**first.values, "UTM": "1788163500000"}
+    stream.on_price(second)
+    assert len(persisted) == 1
 
 
 def test_gap_through_stop_uses_worse_open_and_time_exit_is_deterministic() -> None:

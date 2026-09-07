@@ -10,7 +10,7 @@ from lightstreamer.client import LightstreamerClient, Subscription
 from app.config import Settings
 from app.database import open_database
 from app.ig_demo import IGDemoClient
-from app.market_calendar import is_regular_session
+from app.market_calendar import is_regular_session, operational_session_state
 
 logger = logging.getLogger("aurex.market_stream")
 FIELDS = [
@@ -61,6 +61,9 @@ class IGMarketStream:
         self.settings = settings
         self.authenticated = authenticated
         self.status = "DISCONNECTED"
+        self.started_at = datetime.now(timezone.utc)
+        self.last_update_at: datetime | None = None
+        self._pending: dict[str, tuple[datetime, list[Decimal], list[Decimal], list[Decimal], int]] = {}
         self._lock = Lock()
         with open_database(settings) as connection:
             cursor = connection.cursor()
@@ -113,6 +116,7 @@ class IGMarketStream:
         self.client.disconnect()
 
     def on_price(self, update: object) -> None:
+        self.last_update_at = datetime.now(timezone.utc)
         item = str(update.getItemName())
         epic = item.removeprefix("CHART:").removesuffix(":5MINUTE")
         market = self.markets.get(epic)
@@ -129,7 +133,11 @@ class IGMarketStream:
         ticks = int(_number(update, "LTV") or 0)
         completed = update.getValue("CONS_END") == "1"
         with self._lock:
+            previous = self._pending.get(epic)
+            if previous and opened > previous[0]:
+                self._persist(market, *previous)
             self._persist_live(market, opened, values, bid, offer, ticks, completed)
+            self._pending[epic] = (opened, values, bid, offer, ticks)
             if completed:
                 self._persist(market, opened, values, bid, offer, ticks)
         if not completed:
@@ -142,6 +150,23 @@ class IGMarketStream:
                 "result": market["symbol"],
             },
         )
+
+    def should_receive_updates(self, now_utc: datetime | None = None) -> bool:
+        now = now_utc or datetime.now(timezone.utc)
+        return any(operational_session_state(
+            now, calendar_code=str(market["calendar_code"]),
+            market_timezone=str(market["timezone"]), session_open=market["open"],
+            session_close=market["close"],
+            holidays={day: None for day in market["holidays"]},
+        ).should_receive_data for market in self.markets.values())
+
+    def stalled(self, *, now_utc: datetime | None = None,
+                maximum_silence: timedelta = timedelta(minutes=20)) -> bool:
+        now = now_utc or datetime.now(timezone.utc)
+        if not self.should_receive_updates(now):
+            return False
+        reference = self.last_update_at or self.started_at
+        return now - reference > maximum_silence
 
     def _persist_live(
         self, market: dict[str, object], opened: datetime, values: list[Decimal],

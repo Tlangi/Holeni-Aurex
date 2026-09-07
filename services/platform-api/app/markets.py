@@ -211,14 +211,36 @@ def read_candles(
             (source_limit, symbol, source_timeframe, period, start_utc, end_utc),
         )
         rows = list(reversed(cursor.fetchall()))
+        # Quality must be evaluated over the full requested window.  The chart
+        # response is intentionally capped, but that cap is not evidence that
+        # older canonical candles are missing.
+        quality_rows = rows
+        if period != "ALL":
+            cursor.execute(
+                """SELECT symbol,timeframe,open_time_utc,open_time_sast,
+                          [open],high,low,[close],bid_close,ask_close,spread_close,
+                          is_regular_session,tick_count,source
+                   FROM app.v_market_candles AS v
+                   WHERE symbol=%s AND timeframe=%s AND completed=1
+                     AND EXISTS (SELECT 1 FROM app.candles AS quality
+                                 WHERE quality.candle_id=v.candle_id AND quality.quality_status='PASS')
+                     AND open_time_utc >= %s AND open_time_utc <= %s
+                   ORDER BY open_time_utc""",
+                (symbol, source_timeframe, start_utc, end_utc),
+            )
+            quality_rows = cursor.fetchall()
     if timeframe not in {"M5", "M15"}:
         rows = _aggregate_rows(rows, timeframe)[-limit:]
+        quality_rows = _aggregate_rows(quality_rows, timeframe)
     else:
         rows = rows[-limit:]
     quality = calculate_history_quality(
-        rows, timeframe=timeframe, requested_start=None if period == "ALL" else start_utc,
+        quality_rows, timeframe=timeframe, requested_start=None if period == "ALL" else start_utc,
         requested_end=end_utc, market=market, holidays=holidays, period=period,
     )
+    quality["evaluated_candle_count"] = quality["returned_candle_count"]
+    quality["returned_candle_count"] = len(rows)
+    quality["response_truncated"] = len(rows) < len(quality_rows)
     return {
         "symbol": symbol,
         "timeframe": timeframe,

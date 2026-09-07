@@ -70,13 +70,17 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     ))
             cursor.execute(
                 """SELECT m.symbol,m.calendar_code,m.market_timezone,m.session_open_local,
-                          m.session_close_local,MAX(c.open_time_utc) latest
+                          m.session_close_local,MAX(c.open_time_utc) latest,
+                          MAX(l.open_time_utc) live_latest,MAX(l.updated_at_utc) live_updated
                    FROM app.markets m LEFT JOIN app.candles c ON c.market_id=m.market_id
                      AND c.timeframe='M5' AND c.completed=1
+                   LEFT JOIN app.live_candle_snapshots l ON l.market_id=m.market_id
+                     AND l.timeframe='M5'
                    WHERE m.enabled=1
                    GROUP BY m.symbol,m.calendar_code,m.market_timezone,
                             m.session_open_local,m.session_close_local"""
             )
+            stale_markets: list[tuple[str, object, object]] = []
             for market in cursor.fetchall():
                 latest = market["latest"]
                 cursor.execute(
@@ -92,17 +96,33 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     session_close=market["session_close_local"],
                     holidays=holidays,
                 )
+                # Feed health follows the current streaming heartbeat. Completed
+                # candles remain the authority for models and execution, but IG's
+                # CONS_END marker can lag while current price updates are healthy.
+                feed_latest = market["live_latest"] if (
+                    market["live_updated"] is not None
+                    and market["live_updated"] >= now - timedelta(seconds=settings.execution_m5_fresh_seconds)
+                ) else latest
                 if market_data_stale(
-                    latest, now_utc=now.replace(tzinfo=timezone.utc), session=session,
+                    feed_latest, now_utc=now.replace(tzinfo=timezone.utc), session=session,
                     freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),
                 ):
-                    symbol = str(market["symbol"])
-                    issues.append(HealthIssue(
-                        f"market.{symbol}.session_data_stale", "WARNING",
-                        f"No market data during the open session for {symbol}",
-                        f"latest_completed_m5={latest}; session_state={session.status}; "
-                        f"session_reason={session.reason}",
-                    ))
+                    stale_markets.append((str(market["symbol"]), latest, session))
+            if len(stale_markets) == 1:
+                symbol, latest, session = stale_markets[0]
+                issues.append(HealthIssue(
+                    f"market.{symbol}.session_data_stale", "WARNING",
+                    f"No market data during the open session for {symbol}",
+                    f"latest_completed_m5={latest}; session_state={session.status}; "
+                    f"session_reason={session.reason}",
+                ))
+            elif stale_markets:
+                details = "; ".join(f"{symbol}={latest}" for symbol, latest, _ in stale_markets)
+                issues.append(HealthIssue(
+                    "market_feed.session_data_stale", "CRITICAL",
+                    f"Shared market feed is stale for {len(stale_markets)} open markets",
+                    f"latest_completed_m5: {details}",
+                ))
             cursor.execute(
                 """WITH latest AS (
                      SELECT s.*,m.symbol,ROW_NUMBER() OVER(PARTITION BY s.tenant_id,s.market_id
