@@ -107,6 +107,7 @@ def test_stream_watchdog_restarts_only_during_an_open_market() -> None:
     stream = object.__new__(IGMarketStream)
     stream.started_at = datetime(2026, 8, 31, 7, 0, tzinfo=timezone.utc)
     stream.last_update_at = datetime(2026, 8, 31, 7, 5, tzinfo=timezone.utc)
+    stream.latest_event_bucket = datetime(2026, 8, 31, 7, 5, tzinfo=timezone.utc)
     stream.markets = {
         "IX.D.DAX.BMU.IP": {
             "calendar_code": "XETRA_REGULAR", "timezone": "Europe/Berlin",
@@ -117,12 +118,25 @@ def test_stream_watchdog_restarts_only_during_an_open_market() -> None:
     assert not stream.stalled(now_utc=datetime(2026, 8, 30, 7, 30, tzinfo=timezone.utc))
 
 
+def test_stream_watchdog_rejects_fresh_messages_for_an_old_bucket() -> None:
+    stream = object.__new__(IGMarketStream)
+    stream.started_at = datetime(2026, 8, 31, 7, 0, tzinfo=timezone.utc)
+    stream.last_update_at = datetime(2026, 8, 31, 7, 29, tzinfo=timezone.utc)
+    stream.latest_event_bucket = datetime(2026, 8, 31, 7, 5, tzinfo=timezone.utc)
+    stream.markets = {
+        "EPIC": {"calendar_code": "XETRA_REGULAR", "timezone": "Europe/Berlin",
+                 "open": time(9), "close": time(17, 30), "holidays": set()},
+    }
+    assert stream.stalled(now_utc=datetime(2026, 8, 31, 7, 30, tzinfo=timezone.utc))
+
+
 def test_stream_finalizes_previous_bucket_on_rollover() -> None:
     stream = object.__new__(IGMarketStream)
     stream._pending = {}
     stream._lock = __import__("threading").Lock()
     stream.markets = {"EPIC": {"symbol": "TEST"}}
     stream.last_update_at = None
+    stream.latest_event_bucket = None
     persisted: list[datetime] = []
     stream._persist_live = lambda *_: None
     stream._persist = lambda _market, opened, *_: persisted.append(opened)

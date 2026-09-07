@@ -63,6 +63,7 @@ class IGMarketStream:
         self.status = "DISCONNECTED"
         self.started_at = datetime.now(timezone.utc)
         self.last_update_at: datetime | None = None
+        self.latest_event_bucket: datetime | None = None
         self._pending: dict[str, tuple[datetime, list[Decimal], list[Decimal], list[Decimal], int]] = {}
         self._lock = Lock()
         with open_database(settings) as connection:
@@ -130,6 +131,8 @@ class IGMarketStream:
         values = [(left + right) / 2 for left, right in zip(bid, offer)]
         opened = datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=timezone.utc)
         opened = opened.replace(minute=opened.minute - opened.minute % 5, second=0, microsecond=0)
+        if self.latest_event_bucket is None or opened > self.latest_event_bucket:
+            self.latest_event_bucket = opened
         ticks = int(_number(update, "LTV") or 0)
         completed = update.getValue("CONS_END") == "1"
         with self._lock:
@@ -161,11 +164,13 @@ class IGMarketStream:
         ).should_receive_data for market in self.markets.values())
 
     def stalled(self, *, now_utc: datetime | None = None,
-                maximum_silence: timedelta = timedelta(minutes=20)) -> bool:
+                maximum_silence: timedelta = timedelta(minutes=10)) -> bool:
         now = now_utc or datetime.now(timezone.utc)
         if not self.should_receive_updates(now):
             return False
-        reference = self.last_update_at or self.started_at
+        # Message traffic alone is insufficient: IG can keep emitting updates
+        # for an old chart item while its candle clock has stopped advancing.
+        reference = self.latest_event_bucket or self.last_update_at or self.started_at
         return now - reference > maximum_silence
 
     def _persist_live(

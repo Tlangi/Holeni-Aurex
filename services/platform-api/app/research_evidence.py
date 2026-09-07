@@ -107,12 +107,28 @@ def _record_gap(
 ) -> None:
     minutes = max(0, int((_aware(end) - _aware(start)).total_seconds() // 60))
     cursor.execute(
-        """SELECT TOP (1) data_quality_gap_id FROM app.data_quality_gaps
-           WHERE market_id=%s AND timeframe=%s AND gap_start_utc=%s AND gap_end_utc=%s
-             AND classification=%s AND resolved_at_utc IS NULL""",
-        (market_id, timeframe, start, end, classification),
+        """SELECT TOP (1) data_quality_gap_id,gap_start_utc,gap_end_utc
+           FROM app.data_quality_gaps
+           WHERE market_id=%s AND timeframe=%s AND classification=%s
+             AND resolved_at_utc IS NULL
+             AND gap_start_utc<=DATEADD(minute,5,%s)
+             AND gap_end_utc>=DATEADD(minute,-5,%s)
+           ORDER BY detected_at_utc""",
+        (market_id, timeframe, classification, end, start),
     )
-    if cursor.fetchone():
+    existing = cursor.fetchone()
+    if existing:
+        merged_start = min(_aware(existing["gap_start_utc"]), _aware(start))
+        merged_end = max(_aware(existing["gap_end_utc"]), _aware(end))
+        merged_minutes = max(0, int((merged_end - merged_start).total_seconds() // 60))
+        cursor.execute(
+            """UPDATE app.data_quality_gaps SET gap_start_utc=%s,gap_end_utc=%s,
+                      gap_minutes=%s,execution_blocking=CASE WHEN execution_blocking=1 OR %s=1 THEN 1 ELSE 0 END,
+                      reason=%s
+               WHERE data_quality_gap_id=%s""",
+            (merged_start, merged_end, merged_minutes, int(blocking), reason,
+             str(existing["data_quality_gap_id"])),
+        )
         return
     cursor.execute(
         """INSERT app.data_quality_gaps
