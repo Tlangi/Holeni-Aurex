@@ -25,6 +25,15 @@ class HealthIssue:
     detail: str
 
 
+def _web_health_url(settings: Settings) -> str:
+    if settings.app_env.lower() == "production":
+        external = next((origin for origin in settings.allowed_origins
+                         if origin.lower().startswith("https://")), None)
+        if external:
+            return f"{external.rstrip('/')}/_health"
+    return f"http://{settings.web_host}:{settings.web_port}/_health"
+
+
 def inspect_health(settings: Settings) -> list[HealthIssue]:
     issues: list[HealthIssue] = []
     try:
@@ -40,7 +49,7 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
 
     try:
         response = requests.get(
-            f"http://{settings.web_host}:{settings.web_port}/_health", timeout=10,
+            _web_health_url(settings), timeout=10,
         )
         if response.status_code != 200:
             issues.append(HealthIssue("web.not_ready", "WARNING", "Owner web application is not ready",
