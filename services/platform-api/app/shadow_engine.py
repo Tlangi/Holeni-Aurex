@@ -419,7 +419,10 @@ def _risk_from_database(cursor: object, tenant_id: str, account: dict[str, objec
     cursor.execute(
         """SELECT COUNT(*) trade_count FROM app.order_intents
            WHERE trading_account_id=%s
-             AND created_at_utc>=CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'South Africa Standard Time' AS date)
+             AND created_at_utc>=CAST(
+                 (CAST(CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'South Africa Standard Time' AS date)
+                       AS datetime2) AT TIME ZONE 'South Africa Standard Time')
+                  AT TIME ZONE 'UTC' AS datetime2)
              AND status NOT IN ('REJECTED','FAILED','CANCELLED')""", (account_id,),
     )
     trades_today = int(cursor.fetchone()["trade_count"] or 0)

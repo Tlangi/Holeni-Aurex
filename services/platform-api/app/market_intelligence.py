@@ -33,7 +33,7 @@ def _persist_m5(settings: Settings, market_id: str, prices: list[dict[str, objec
         try:
             for candle in prices:
                 try:
-                    opened = _timestamp(candle.get("snapshotTimeUTC") or candle.get("snapshotTime"))
+                    opened = _timestamp(candle.get("snapshotTimeUTC"))
                     values = [_midpoint(candle[name]) for name in ("openPrice", "highPrice", "lowPrice", "closePrice")]
                     bids = [Decimal(str(candle[name].get("bid"))) for name in ("openPrice", "highPrice", "lowPrice", "closePrice")]
                     asks = [Decimal(str(candle[name].get("ask"))) for name in ("openPrice", "highPrice", "lowPrice", "closePrice")]
@@ -312,7 +312,7 @@ def backfill_historical_m5(
                     prices, total_pages = client.historical_prices_page(
                         str(market["ig_epic"]), page_size=page_size, page_number=page,
                     )
-                    timestamps = [_timestamp(item.get("snapshotTimeUTC") or item.get("snapshotTime"))
+                    timestamps = [_timestamp(item.get("snapshotTimeUTC"))
                                   for item in prices]
                     if timestamps:
                         page_earliest, page_latest = min(timestamps), max(timestamps)

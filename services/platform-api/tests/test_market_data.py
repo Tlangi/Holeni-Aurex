@@ -7,8 +7,13 @@ import pytest
 from app.market_data import _completed_historical_bucket, _timestamp
 
 
-def test_timestamp_accepts_ig_slash_format_as_utc() -> None:
-    assert _timestamp("2026/08/31 22:00:00") == datetime(2026, 8, 31, 22, 0, tzinfo=timezone.utc)
+def test_timestamp_rejects_ambiguous_ig_account_local_time() -> None:
+    with pytest.raises(ValueError, match="Ambiguous timezone-less"):
+        _timestamp("2026/08/31 22:00:00")
+
+
+def test_timestamp_accepts_explicit_ig_utc_field() -> None:
+    assert _timestamp("2026-08-31T22:00:00") == datetime(2026, 8, 31, 22, 0, tzinfo=timezone.utc)
 
 
 def test_timestamp_normalizes_iso_offset_to_utc() -> None:

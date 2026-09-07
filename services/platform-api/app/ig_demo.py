@@ -198,10 +198,27 @@ class IGDemoClient:
             raise ValueError("Unsupported historical resolution")
         if count < 1 or count > 10000:
             raise ValueError("Historical count must be between 1 and 10000")
-        # IG's v2 count endpoint returns one bounded chronological set and avoids
-        # silently importing only the first page of a larger v3 request.
-        payload = self._get(f"/prices/{epic}/{resolution}/{count}", version="2")
-        return list(payload.get("prices") or [])
+        # v2 exposes only account-local ``snapshotTime``. v3 also supplies
+        # ``snapshotTimeUTC``, which is mandatory for canonical persistence.
+        page_size = min(count, 1000)
+        prices: list[dict[str, Any]] = []
+        page_number = 1
+        while len(prices) < count:
+            payload = self._get_params(
+                f"/prices/{epic}", version="3",
+                params={"resolution": resolution, "pageSize": page_size,
+                        "pageNumber": page_number},
+            )
+            page = [row for row in list(payload.get("prices") or [])
+                    if row.get("snapshotTimeUTC")]
+            prices.extend(page)
+            total_pages = max(1, int(payload.get("metadata", {}).get(
+                "pageData", {},
+            ).get("totalPages") or 1))
+            if page_number >= total_pages or not page:
+                break
+            page_number += 1
+        return prices[:count]
 
     def historical_prices_page(
         self, epic: str, *, resolution: str = "MINUTE_5", page_size: int = 500,

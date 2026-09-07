@@ -13,19 +13,19 @@ def _timestamp(value: object) -> datetime:
     text = str(value or "").strip().replace("Z", "+00:00")
     if not text:
         raise ValueError("Historical candle timestamp is missing")
+    if "/" in text:
+        raise ValueError("Ambiguous timezone-less historical candle timestamp")
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError:
-        parsed = None
-        for pattern in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M:%S.%f"):
-            try:
-                parsed = datetime.strptime(text, pattern)
-                break
-            except ValueError:
-                continue
-        if parsed is None:
-            raise ValueError(f"Unsupported historical candle timestamp: {text}")
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported historical candle timestamp: {text}") from exc
+    if parsed.tzinfo is None:
+        # IG's timezone-less snapshotTime is account-local, not UTC. Only the
+        # explicit snapshotTimeUTC field may enter the canonical UTC series.
+        if "T" not in text:
+            raise ValueError("Ambiguous timezone-less historical candle timestamp")
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _midpoint(price: dict[str, Any]) -> Decimal:
@@ -63,7 +63,7 @@ def persist_historical_prices(
                 # The final bucket can still be forming. IG explicitly marks completed buckets.
                 if str(candle.get("marketStatus") or "").upper() not in {"", "TRADEABLE", "CLOSED"}:
                     continue
-                opened = _timestamp(candle.get("snapshotTimeUTC") or candle.get("snapshotTime"))
+                opened = _timestamp(candle.get("snapshotTimeUTC"))
                 if not _completed_historical_bucket(opened, minutes):
                     continue
                 values = [_midpoint(candle[name]) for name in ("openPrice", "highPrice", "lowPrice", "closePrice")]
