@@ -98,6 +98,26 @@ class Settings(BaseSettings):
     macro_evidence_max_age_hours: int = 168
     macro_event_blackout_minutes: int = 60
     macro_decision_threshold: float = 0.35
+    intelligence_enabled: bool = False
+    llm_provider: str = "disabled"
+    llm_model_fast: str = ""
+    llm_model_deep: str = ""
+    llm_base_url: str = ""
+    llm_api_key: str = Field(default="", repr=False)
+    llm_timeout_seconds: int = Field(default=30, ge=5, le=180)
+    llm_max_retries: int = Field(default=1, ge=0, le=3)
+    llm_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
+    historical_backfill_enabled: bool = False
+    historical_backfill_poll_seconds: int = Field(default=60, ge=15, le=3600)
+    historical_backfill_min_free_gb: int = Field(default=20, ge=5, le=1000)
+    historical_backfill_max_attempts: int = Field(default=3, ge=1, le=10)
+    historical_minimum_coverage: float = Field(default=0.985, ge=0.95, le=1.0)
+    historical_maximum_largest_gap_minutes: int = Field(default=15, ge=1, le=240)
+    historical_maximum_unexpected_gaps: int = Field(default=250, ge=0, le=5000)
+    historical_maximum_rejected_tick_ratio: float = Field(default=0.001, ge=0.0, le=0.01)
+    historical_minimum_cross_source_candles: int = Field(default=100, ge=20, le=10000)
+    historical_minimum_cross_source_match: float = Field(default=0.99, ge=0.90, le=1.0)
+    historical_cross_source_tolerance_ratio: float = Field(default=0.0005, ge=0.00001, le=0.01)
     log_level: str = "INFO"
     health_monitor_seconds: int = 60
     operational_alert_cooldown_minutes: int = 60
@@ -266,6 +286,15 @@ class Settings(BaseSettings):
     @property
     def ig_configured(self) -> bool:
         return bool(self.ig_api_key and self.ig_username and self.ig_password and self.ig_account_id)
+
+    @property
+    def intelligence_provider_configured(self) -> bool:
+        provider = self.llm_provider.strip().lower()
+        if not self.intelligence_enabled or provider in {"", "disabled"}:
+            return False
+        if provider == "ollama":
+            return bool(self.llm_base_url and (self.llm_model_fast or self.llm_model_deep))
+        return bool(self.llm_api_key and (self.llm_model_fast or self.llm_model_deep))
 
     @property
     def demo_execution_configured(self) -> bool:

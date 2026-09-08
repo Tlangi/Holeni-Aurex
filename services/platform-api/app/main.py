@@ -71,6 +71,8 @@ from app.market_qualification import qualify_markets
 from app.market_intelligence import model_readiness
 from app.model_monitoring import read_model_monitoring
 from app.macro_intelligence import generate_market_decisions, read_macro_status, sync_official_macro_sources
+from app.intelligence import read_intelligence_status
+from app.historical_data_status import read_historical_data_status
 from app.trades import read_trade_history
 from app.readiness import read_trading_readiness
 from app.replay_engine import ReplayRequest, read_replay_runs, run_replay
@@ -465,6 +467,18 @@ def macro_sync(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     result["decisions"] = generate_market_decisions(settings, user.tenant_id)
     result["execution_enabled"] = False
     return JSONResponse(content=result)
+
+
+@app.get("/api/v1/intelligence/status", tags=["research"])
+def intelligence_status(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Optional research-only provider/agent state; never an execution control."""
+    return JSONResponse(content=jsonable_encoder(read_intelligence_status(settings, user.tenant_id)))
+
+
+@app.get("/api/v1/research/historical-data", tags=["research"])
+def historical_data_status(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Aggregated M1/M5 provenance and quality status; never returns bulk candles."""
+    return JSONResponse(content=jsonable_encoder(read_historical_data_status(settings, user.tenant_id)))
 
 
 @app.get("/api/v1/shadow/trades", tags=["trading"])

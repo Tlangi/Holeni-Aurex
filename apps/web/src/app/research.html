@@ -96,6 +96,29 @@
         <div><span>Recovery failed</span><strong>{{ research.data_operations.recovery_summary['FAILED'] ?? 0 }}</strong></div>
         <div><span>Quota deferred</span><strong>{{ research.data_operations.recovery_summary['QUOTA_DEFERRED'] ?? 0 }}</strong></div>
       </div>
+      <div class="panel-heading"><div><p>HISTORICAL MARKET DATA</p><h2>Independent M1 and M5 evidence</h2></div>
+        <span>Germany 40 proxy qualification: blocked</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Dataset</th><th>Rows</th><th>From</th><th>To</th><th>Bid/ask</th><th>Research eligible</th></tr></thead>
+        <tbody>@for (item of research.historical_data.datasets; track item.symbol + item.timeframe) {
+          <tr><td>{{ item.symbol }}</td><td>{{ item.timeframe }}</td><td>{{ item.row_count | number }}</td>
+            <td>{{ item.earliest_sast ? (item.earliest_sast | date:'mediumDate':'Africa/Johannesburg') : '—' }}</td>
+            <td>{{ item.latest_sast ? (item.latest_sast | date:'short':'Africa/Johannesburg') : '—' }}</td>
+            <td>{{ item.bid_ask_rows | number }}</td><td>{{ item.research_eligible_rows | number }}</td></tr>
+        }</tbody></table></div>
+      <div class="panel-heading"><div><p>BACKFILL QUEUE</p><h2>Resumable monthly partitions</h2></div>
+        <span>{{ research.historical_data.queue_summary.state }} · {{ research.historical_data.queue_summary.complete }} / {{ research.historical_data.queue_summary.total }} complete</span></div>
+      <div class="protocol-summary">
+        <div><span>Completed</span><strong>{{ research.historical_data.queue_summary.complete }}</strong></div>
+        <div><span>Active</span><strong>{{ research.historical_data.queue_summary.active }}</strong></div>
+        <div><span>Pending</span><strong>{{ research.historical_data.queue_summary.pending }}</strong></div>
+        <div><span>Failed</span><strong>{{ research.historical_data.queue_summary.failed }}</strong></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Vendor</th><th>Partition</th><th>Format</th><th>Status</th><th>Attempts</th></tr></thead>
+        <tbody>@for (job of research.historical_data.jobs; track job.backfill_job_id) {
+          <tr><td>{{ job.symbol }}</td><td>{{ job.vendor }} · {{ job.vendor_symbol }}</td>
+            <td>{{ job.partition_start_sast | date:'mediumDate':'Africa/Johannesburg' }} – {{ job.partition_end_sast | date:'mediumDate':'Africa/Johannesburg' }} SAST</td>
+            <td>{{ job.source_format }}</td><td>{{ job.status }}</td><td>{{ job.attempt_count }}</td></tr>
+        }</tbody></table></div>
       <div class="table-wrap"><table><thead><tr><th>Market</th><th>Provider</th><th>Reason</th><th>Source row</th><th>Status</th><th>Observed</th></tr></thead>
         <tbody>@for (row of research.data_operations.quarantine; track row.market_data_quarantine_id) {
           <tr><td>{{ row.symbol }}</td><td>{{ row.provider }}</td><td>{{ row.rejection_code }}</td>

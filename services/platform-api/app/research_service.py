@@ -23,6 +23,7 @@ from app.research_evidence import read_research_evidence, sync_cost_models, sync
 from app.research_regimes import REGIME_VERSION, confidence_bucket, market_session, trend_regime, volatility_regimes
 from app.research_protocol_store import read_protocol_status
 from app.market_data_operations import read_market_data_operations
+from app.historical_data_status import read_historical_data_status
 
 
 DIAGNOSTIC_VERSION = "STRATEGY_DIAGNOSTICS_V1"
@@ -357,6 +358,7 @@ def read_research_status(settings: Settings, tenant_id: str, limit: int = 20) ->
             **evidence, "experiments": experiments, "holdout": read_holdout_status(settings, tenant_id),
             "selective_protocol": read_protocol_status(settings, tenant_id),
             "data_operations": read_market_data_operations(settings),
+            "historical_data": read_historical_data_status(settings, tenant_id),
             "holdout_policy": {"train": "model fitting", "validation": "configuration selection",
                                "holdout": "single final offline assessment; never tune against it",
                                "forward_shadow": "unseen real-time evidence after validation"}}

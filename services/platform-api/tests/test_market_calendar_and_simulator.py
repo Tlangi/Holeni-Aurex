@@ -157,6 +157,33 @@ def test_stream_finalizes_previous_bucket_on_rollover() -> None:
     assert len(persisted) == 1
 
 
+def test_stream_accepts_m1_for_every_database_discovered_market() -> None:
+    stream = object.__new__(IGMarketStream)
+    stream._pending = {}
+    stream._lock = __import__("threading").Lock()
+    stream.markets = {"EPIC_A": {"symbol": "EURUSD"}, "EPIC_B": {"symbol": "USDJPY"}}
+    stream.last_update_at = None
+    stream.latest_event_bucket = None
+    persisted: list[tuple[str, str, int, datetime]] = []
+    stream._persist_live = lambda *_: None
+    stream._persist = lambda market, timeframe, minutes, opened, *_: persisted.append(
+        (str(market["symbol"]), timeframe, minutes, opened))
+
+    class Update:
+        values = {"UTM": "1788804660000", "BID_OPEN": "1", "BID_HIGH": "2",
+                  "BID_LOW": "0.5", "BID_CLOSE": "1.5", "OFR_OPEN": "1.1",
+                  "OFR_HIGH": "2.1", "OFR_LOW": "0.6", "OFR_CLOSE": "1.6",
+                  "LTV": "1", "CONS_END": "1"}
+        def __init__(self, epic: str): self.epic = epic
+        def getValue(self, name: str) -> str: return self.values[name]
+        def getItemName(self) -> str: return f"CHART:{self.epic}:1MINUTE"
+
+    stream.on_price(Update("EPIC_A"))
+    stream.on_price(Update("EPIC_B"))
+    assert {(symbol, timeframe, minutes) for symbol, timeframe, minutes, _ in persisted} == {
+        ("EURUSD", "M1", 1), ("USDJPY", "M1", 1)}
+
+
 def test_gap_through_stop_uses_worse_open_and_time_exit_is_deterministic() -> None:
     gap = resolve_candle_exit(
         "BUY", stop=Decimal("99"), target=Decimal("103"), opened=Decimal("98"),

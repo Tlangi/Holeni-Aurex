@@ -122,6 +122,8 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
                JOIN app.markets m ON m.market_id=r.market_id
                WHERE m.enabled=1 AND m.signal_enabled=1 AND r.value_per_price_point_zar IS NOT NULL
                  AND r.margin_factor_pct IS NOT NULL AND r.margin_factor_pct>0
+                 AND r.size_increment IS NOT NULL AND r.size_increment>0
+                 AND r.size_increment_authoritative=1
                  AND r.deal_currency IS NOT NULL AND r.force_open_allowed=1
                  AND r.market_order_preference IN ('AVAILABLE_DEFAULT_OFF','AVAILABLE_DEFAULT_ON')
                  AND r.observed_at_utc >= DATEADD(hour,-24,SYSUTCDATETIME())"""
@@ -176,7 +178,7 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
         "macro_intelligence_current": ReadinessCheck(component_ok("macro_intelligence") and macro_score_count == 4, "PASS" if component_ok("macro_intelligence") and macro_score_count == 4 else "BLOCKED", f"Current audited macro scores: {macro_score_count}/4 currencies"),
         "validated_models": ReadinessCheck(int(models.get("validated_models") or 0) >= 1, "PASS" if int(models.get("validated_models") or 0) >= 1 else "BLOCKED", f"Markets with a validated model: {int(models.get('validated_models') or 0)}/{expected_markets}; at least one is required for staged demo execution"),
         "active_risk_profile": ReadinessCheck(active_risk == 1, "PASS" if active_risk == 1 else "BLOCKED", f"Active risk profiles: {active_risk}"),
-        "position_sizing_rules": ReadinessCheck(rule_count >= expected_markets, "PASS" if rule_count >= expected_markets else "BLOCKED", f"Current broker sizing rules: {rule_count}/{expected_markets}"),
+        "position_sizing_rules": ReadinessCheck(rule_count >= expected_markets, "PASS" if rule_count >= expected_markets else "BLOCKED", f"Authoritative broker sizing rules: {rule_count}/{expected_markets}; fallback increments never satisfy execution readiness"),
         "reconciliation_clear": ReadinessCheck(unresolved_positions == 0 and reconciliation_issues == 0, "PASS" if unresolved_positions == 0 and reconciliation_issues == 0 else "BLOCKED", f"Unresolved positions: {unresolved_positions}; issues: {reconciliation_issues}"),
         "unknown_submissions_clear": ReadinessCheck(unknown_orders == 0, "PASS" if unknown_orders == 0 else "BLOCKED", f"Unknown order submissions: {unknown_orders}"),
         "daily_risk_ledger_current": ReadinessCheck(ledger_current, "PASS" if ledger_current else "BLOCKED", "South African daily risk ledger is current" if ledger_current else "Daily risk ledger is missing, stale or blocked"),

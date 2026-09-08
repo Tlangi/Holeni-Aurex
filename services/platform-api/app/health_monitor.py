@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Event
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -15,6 +16,14 @@ from app.email_delivery import send_email
 from app.market_calendar import market_data_stale, operational_session_state
 
 logger = logging.getLogger("aurex.health_monitor")
+SAST = ZoneInfo("Africa/Johannesburg")
+
+
+def dual_time(value: datetime | None) -> str:
+    if value is None:
+        return "NONE"
+    utc=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return f"{utc.strftime('%Y-%m-%d %H:%M:%S')} UTC / {utc.astimezone(SAST).strftime('%Y-%m-%d %H:%M:%S')} SAST"
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,8 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     ))
             cursor.execute(
                 """SELECT m.symbol,m.calendar_code,m.market_timezone,m.session_open_local,
-                          m.session_close_local,MAX(c.open_time_utc) latest,
+                          m.session_close_local,MAX(c.open_time_utc) latest_open,
+                          MAX(c.close_time_utc) latest_close,
                           MAX(l.open_time_utc) live_latest,MAX(l.updated_at_utc) live_updated
                    FROM app.markets m LEFT JOIN app.candles c ON c.market_id=m.market_id
                      AND c.timeframe='M5' AND c.completed=1
@@ -91,7 +101,8 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
             )
             stale_markets: list[tuple[str, object, object]] = []
             for market in cursor.fetchall():
-                latest = market["latest"]
+                latest_open = market["latest_open"]
+                latest_close = market["latest_close"]
                 cursor.execute(
                     """SELECT holiday_date,session_close_local FROM app.market_holidays
                        WHERE calendar_code=%s""", (str(market["calendar_code"]),),
@@ -112,27 +123,32 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     market["live_updated"] is not None
                     and market["live_updated"] >= now - timedelta(seconds=settings.execution_m5_fresh_seconds)
                 ) else None
-                feed_latest = max((value for value in (latest, live_latest) if value is not None),
+                # A completed M5 is fresh from its close, not its open. A live
+                # update is fresh from receipt, irrespective of its bucket open.
+                feed_latest = max((value for value in (latest_close, market["live_updated"] if live_latest else None)
+                                   if value is not None),
                                   default=None)
                 if market_data_stale(
                     feed_latest, now_utc=now.replace(tzinfo=timezone.utc), session=session,
                     freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),
                 ):
-                    stale_markets.append((str(market["symbol"]), latest, session))
+                    stale_markets.append((str(market["symbol"]), latest_open, latest_close, session))
             if len(stale_markets) == 1:
-                symbol, latest, session = stale_markets[0]
+                symbol, latest_open, latest_close, session = stale_markets[0]
                 issues.append(HealthIssue(
                     f"market.{symbol}.session_data_stale", "WARNING",
                     f"No market data during the open session for {symbol}",
-                    f"latest_completed_m5={latest}; session_state={session.status}; "
+                    f"latest_completed_m5_open={dual_time(latest_open)}; "
+                    f"latest_completed_m5_close={dual_time(latest_close)}; session_state={session.status}; "
                     f"session_reason={session.reason}",
                 ))
             elif stale_markets:
-                details = "; ".join(f"{symbol}={latest}" for symbol, latest, _ in stale_markets)
+                details = "; ".join(f"{symbol}={dual_time(latest_close)}"
+                                    for symbol, _, latest_close, _ in stale_markets)
                 issues.append(HealthIssue(
                     "market_feed.session_data_stale", "CRITICAL",
                     f"Shared market feed is stale for {len(stale_markets)} open markets",
-                    f"latest_completed_m5: {details}",
+                    f"latest_completed_m5_close: {details}",
                 ))
             cursor.execute(
                 """WITH latest AS (

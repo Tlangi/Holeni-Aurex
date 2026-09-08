@@ -1,12 +1,14 @@
 import { Routes } from '@angular/router';
 import { DashboardComponent } from './app';
 import { ownerGuard } from './auth.guard';
-import { LoginComponent } from './login';
-import { ResearchComponent } from './research';
 
 export const routes: Routes = [
-  { path: 'login', component: LoginComponent },
-  { path: 'research', component: ResearchComponent, canActivate: [ownerGuard] },
+  { path: 'login', loadComponent: () => import('./login').then((module) => module.LoginComponent) },
+  {
+    path: 'research',
+    loadComponent: () => import('./research').then((module) => module.ResearchComponent),
+    canActivate: [ownerGuard],
+  },
   {
     path: 'experimental-lab',
     loadComponent: () => import('./experimental-lab').then((module) => module.ExperimentalLabComponent),

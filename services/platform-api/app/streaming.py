@@ -17,6 +17,8 @@ FIELDS = [
     "UTM", "BID_OPEN", "BID_HIGH", "BID_LOW", "BID_CLOSE",
     "OFR_OPEN", "OFR_HIGH", "OFR_LOW", "OFR_CLOSE", "LTV", "CONS_END",
 ]
+STREAM_SCALES = {"1MINUTE": ("M1", 1), "5MINUTE": ("M5", 5)}
+DERIVED_SCALES = {"M5": 5, "M15": 15, "M30": 30, "H1": 60}
 
 
 def _number(update: object, field: str) -> Decimal | None:
@@ -53,7 +55,7 @@ class _PriceListener:
 
 
 class IGMarketStream:
-    """IG Lightstreamer subscription that persists completed M5/M15 candles."""
+    """Shared IG subscription for every configured research market and scale."""
 
     def __init__(self, settings: Settings, authenticated: IGDemoClient) -> None:
         if not authenticated.lightstreamer_endpoint or not authenticated.account_id:
@@ -64,7 +66,7 @@ class IGMarketStream:
         self.started_at = datetime.now(timezone.utc)
         self.last_update_at: datetime | None = None
         self.latest_event_bucket: datetime | None = None
-        self._pending: dict[str, tuple[datetime, list[Decimal], list[Decimal], list[Decimal], int]] = {}
+        self._pending: dict[tuple[str, str], tuple[datetime, list[Decimal], list[Decimal], list[Decimal], int]] = {}
         self._lock = Lock()
         with open_database(settings) as connection:
             cursor = connection.cursor()
@@ -97,7 +99,7 @@ class IGMarketStream:
 
     def start(self) -> None:
         subscription = Subscription(
-            "MERGE", [f"CHART:{epic}:5MINUTE" for epic in self.markets], FIELDS
+            "MERGE", [f"CHART:{epic}:{scale}" for epic in self.markets for scale in STREAM_SCALES], FIELDS
         )
         subscription.setRequestedSnapshot("yes")
         subscription.addListener(_PriceListener(self))
@@ -119,7 +121,11 @@ class IGMarketStream:
     def on_price(self, update: object) -> None:
         self.last_update_at = datetime.now(timezone.utc)
         item = str(update.getItemName())
-        epic = item.removeprefix("CHART:").removesuffix(":5MINUTE")
+        try:
+            _, epic, scale = item.split(":", 2)
+            timeframe, minutes = STREAM_SCALES[scale]
+        except (ValueError, KeyError):
+            return
         market = self.markets.get(epic)
         if not market:
             return
@@ -130,23 +136,24 @@ class IGMarketStream:
             return
         values = [(left + right) / 2 for left, right in zip(bid, offer)]
         opened = datetime.fromtimestamp(float(timestamp_ms) / 1000, tz=timezone.utc)
-        opened = opened.replace(minute=opened.minute - opened.minute % 5, second=0, microsecond=0)
+        opened = opened.replace(minute=opened.minute - opened.minute % minutes, second=0, microsecond=0)
         if self.latest_event_bucket is None or opened > self.latest_event_bucket:
             self.latest_event_bucket = opened
         ticks = int(_number(update, "LTV") or 0)
         completed = update.getValue("CONS_END") == "1"
         with self._lock:
-            previous = self._pending.get(epic)
+            pending_key = (epic, timeframe)
+            previous = self._pending.get(pending_key)
             if previous and opened > previous[0]:
-                self._persist(market, *previous)
-            self._persist_live(market, opened, values, bid, offer, ticks, completed)
-            self._pending[epic] = (opened, values, bid, offer, ticks)
+                self._persist(market, timeframe, minutes, *previous)
+            self._persist_live(market, timeframe, opened, values, bid, offer, ticks, completed)
+            self._pending[pending_key] = (opened, values, bid, offer, ticks)
             if completed:
-                self._persist(market, opened, values, bid, offer, ticks)
+                self._persist(market, timeframe, minutes, opened, values, bid, offer, ticks)
         if not completed:
             return
         logger.info(
-            "completed M5 candle persisted",
+            f"completed {timeframe} candle persisted",
             extra={
                 "worker": "market_stream",
                 "operation": "ig.stream.candle",
@@ -174,7 +181,7 @@ class IGMarketStream:
         return now - reference > maximum_silence
 
     def _persist_live(
-        self, market: dict[str, object], opened: datetime, values: list[Decimal],
+        self, market: dict[str, object], timeframe: str, opened: datetime, values: list[Decimal],
         bid: list[Decimal], ask: list[Decimal], ticks: int, completed: bool,
     ) -> None:
         """Publish one authoritative mutable candle for browser fan-out."""
@@ -182,7 +189,7 @@ class IGMarketStream:
             cursor = connection.cursor()
             cursor.execute(
                 """MERGE app.live_candle_snapshots WITH (HOLDLOCK) AS target
-                   USING (SELECT CONVERT(uniqueidentifier,%s) market_id,'M5' timeframe) source
+                   USING (SELECT CONVERT(uniqueidentifier,%s) market_id,%s timeframe) source
                      ON target.market_id=source.market_id AND target.timeframe=source.timeframe
                    WHEN MATCHED AND %s>=target.open_time_utc THEN UPDATE SET
                      open_time_utc=%s,[open]=%s,high=%s,low=%s,[close]=%s,
@@ -192,16 +199,16 @@ class IGMarketStream:
                    WHEN NOT MATCHED THEN INSERT
                      (market_id,timeframe,open_time_utc,[open],high,low,[close],bid_close,
                       ask_close,spread_close,tick_count,source_event_utc,source_sequence,completed)
-                     VALUES(%s,'M5',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s);""",
-                (str(market["market_id"]), opened, opened, *values,
+                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s);""",
+                (str(market["market_id"]), timeframe, opened, opened, *values,
                  bid[3], ask[3], ask[3] - bid[3], ticks, opened, completed,
-                 str(market["market_id"]), opened, *values, bid[3], ask[3], ask[3] - bid[3],
+                 str(market["market_id"]), timeframe, opened, *values, bid[3], ask[3], ask[3] - bid[3],
                  ticks, opened, completed),
             )
             connection.commit()
 
     def _persist(
-        self, market: dict[str, object], opened: datetime, values: list[Decimal],
+        self, market: dict[str, object], timeframe: str, minutes: int, opened: datetime, values: list[Decimal],
         bid: list[Decimal], ask: list[Decimal], ticks: int,
     ) -> None:
         market_id = str(market["market_id"])
@@ -214,14 +221,24 @@ class IGMarketStream:
             cursor = connection.cursor()
             try:
                 cursor.execute(
-                    """IF NOT EXISTS(SELECT 1 FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc=%s)
+                    """IF NOT EXISTS(SELECT 1 FROM app.candles WHERE market_id=%s AND timeframe=%s AND open_time_utc=%s)
                        INSERT app.candles(market_id,timeframe,open_time_utc,close_time_utc,[open],high,low,[close],
                          bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close,
-                         spread_open,spread_close,is_regular_session,tick_count,source,completed)
-                       VALUES(%s,'M5',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'IG_LIGHTSTREAMER',1)""",
-                    (market_id, opened, market_id, opened, opened + timedelta(minutes=5),
-                     *values, *bid, *ask, ask[0] - bid[0], ask[3] - bid[3], regular, ticks),
+                         spread_open,spread_close,spread_min,spread_max,spread_mean,is_regular_session,tick_count,
+                         source,completed,ingested_at_utc,gap_status)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,SYSUTCDATETIME(),'OBSERVED')""",
+                    (market_id, timeframe, opened, market_id, timeframe, opened, opened + timedelta(minutes=minutes),
+                     *values, *bid, *ask, ask[0] - bid[0], ask[3] - bid[3],
+                     min(right-left for left,right in zip(bid,ask)), max(right-left for left,right in zip(bid,ask)),
+                     sum((right-left for left,right in zip(bid,ask)), Decimal("0"))/Decimal("4"), regular, ticks,
+                     f"IG_LIGHTSTREAMER_{timeframe}"),
                 )
+                if timeframe == "M1":
+                    self._aggregate_m1(cursor, market_id, opened)
+                if timeframe != "M5":
+                    connection.commit()
+                    self._component("CURRENT", f"IG Lightstreamer completed {timeframe} candles are current")
+                    return
                 bucket = opened.replace(minute=opened.minute - opened.minute % 15)
                 cursor.execute(
                     """SELECT COUNT(*),MIN([low]),MAX([high]),SUM(tick_count),
@@ -259,6 +276,38 @@ class IGMarketStream:
             except Exception:
                 connection.rollback()
                 logger.exception("Failed to persist IG streaming candle")
+
+    @staticmethod
+    def _aggregate_m1(cursor: object, market_id: str, observed: datetime) -> None:
+        """Create completed side-aware candles only when every expected M1 source row exists."""
+        for timeframe, minutes in DERIVED_SCALES.items():
+            bucket = observed.replace(minute=observed.minute - observed.minute % minutes, second=0, microsecond=0)
+            end = bucket + timedelta(minutes=minutes)
+            cursor.execute(
+                """IF (SELECT COUNT(*) FROM app.candles WHERE market_id=%s AND timeframe='M1'
+                       AND open_time_utc>=%s AND open_time_utc<%s AND completed=1 AND quality_status='PASS')=%s
+                   AND NOT EXISTS(SELECT 1 FROM app.candles WHERE market_id=%s AND timeframe=%s AND open_time_utc=%s)
+                   INSERT app.candles(market_id,timeframe,open_time_utc,close_time_utc,[open],high,low,[close],
+                     bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close,
+                     spread_open,spread_close,spread_min,spread_max,spread_mean,is_regular_session,tick_count,
+                     source,completed,ingested_at_utc,gap_status)
+                   SELECT %s,%s,%s,%s,
+                     (SELECT TOP 1 [open] FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
+                     MAX(high),MIN(low),(SELECT TOP 1 [close] FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
+                     (SELECT TOP 1 bid_open FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
+                     MAX(bid_high),MIN(bid_low),(SELECT TOP 1 bid_close FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
+                     (SELECT TOP 1 ask_open FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
+                     MAX(ask_high),MIN(ask_low),(SELECT TOP 1 ask_close FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
+                     (SELECT TOP 1 spread_open FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
+                     (SELECT TOP 1 spread_close FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
+                     MIN(spread_min),MAX(spread_max),AVG(spread_mean),MIN(CAST(is_regular_session AS int)),SUM(tick_count),
+                     'DERIVED_M1',1,SYSUTCDATETIME(),'COMPLETE'
+                   FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s""",
+                (market_id,bucket,end,minutes,market_id,timeframe,bucket,
+                 market_id,timeframe,bucket,end,
+                 market_id,bucket,end, market_id,bucket,end, market_id,bucket,end,
+                 market_id,bucket,end, market_id,bucket,end, market_id,bucket,end,
+                 market_id,bucket,end, market_id,bucket,end, market_id,bucket,end))
 
     def _component(self, status: str, detail: str, *, include_ig_demo: bool = False) -> None:
         try:

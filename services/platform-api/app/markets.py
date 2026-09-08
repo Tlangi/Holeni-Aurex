@@ -8,7 +8,7 @@ from app.config import Settings
 from app.database import open_database
 from app.market_calendar import is_regular_session
 
-TIMEFRAME_MINUTES = {"M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+TIMEFRAME_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
 
 
 def _quality_bucket(value: datetime, timeframe: str) -> datetime:
@@ -46,7 +46,7 @@ def calculate_history_quality(
                 candidate = _quality_bucket(point, timeframe)
                 if candidate + interval <= requested_end:
                     expected_buckets.add(candidate)
-            point += timedelta(minutes=5)
+            point += timedelta(minutes=1 if timeframe == "M1" else 5)
         expected = sorted(expected_buckets)
     expected_set, observed_set = set(expected), set(observed)
     missing = sorted(expected_set - observed_set) if authoritative else []
@@ -151,7 +151,7 @@ def read_market_inventory(settings: Settings, tenant_id: str) -> dict[str, objec
             }
             for item in markets
         ],
-        "timeframes": ["M5", "M15", "M30", "H1", "H4", "D1"],
+        "timeframes": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"],
         "periods": ["TODAY", "7D", "ALL"],
         "execution_enabled": False,
     }
@@ -164,7 +164,7 @@ def read_candles(
     symbol = symbol.upper()
     timeframe = timeframe.upper()
     period = period.upper()
-    if timeframe not in {"M5", "M15", "M30", "H1", "H4", "D1"}:
+    if timeframe not in {"M1", "M5", "M15", "M30", "H1", "H4", "D1"}:
         raise ValueError("Unsupported timeframe")
     if period not in {"TODAY", "7D", "ALL"}:
         raise ValueError("Unsupported candle period")
@@ -195,7 +195,7 @@ def read_candles(
             raise ValueError("Unsupported market")
         cursor.execute("SELECT holiday_date FROM app.market_holidays WHERE calendar_code=%s", (market["calendar_code"],))
         holidays = {row["holiday_date"] for row in cursor.fetchall()}
-        source_timeframe = timeframe if timeframe in {"M5", "M15"} else "M15"
+        source_timeframe = timeframe if timeframe in {"M1", "M5", "M15", "M30", "H1"} else "M15"
         multiplier = {"M30": 2, "H1": 4, "H4": 16, "D1": 96}.get(timeframe, 1)
         source_limit = min(10000, limit * multiplier + multiplier)
         cursor.execute(
@@ -229,7 +229,7 @@ def read_candles(
                 (symbol, source_timeframe, start_utc, end_utc),
             )
             quality_rows = cursor.fetchall()
-    if timeframe not in {"M5", "M15"}:
+    if timeframe not in {"M1", "M5", "M15", "M30", "H1"}:
         rows = _aggregate_rows(rows, timeframe)[-limit:]
         quality_rows = _aggregate_rows(quality_rows, timeframe)
     else:

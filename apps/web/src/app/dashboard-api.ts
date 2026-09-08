@@ -81,7 +81,7 @@ export interface MarketHistoryQuality {
 
 export interface MarketCandlesData {
   symbol: string;
-  timeframe: 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1';
+  timeframe: 'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1';
   timezone: 'Africa/Johannesburg';
   session_date: string | null;
   period: 'TODAY' | '7D' | 'ALL';
@@ -137,7 +137,7 @@ export interface MarketInventoryData {
     broker_instrument_type: string;
     broker_resolved_at_utc: string | null;
   }>;
-  timeframes: Array<'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1'>;
+  timeframes: Array<'M1' | 'M5' | 'M15' | 'M30' | 'H1' | 'H4' | 'D1'>;
   periods: Array<'TODAY' | '7D' | 'ALL'>;
   execution_enabled: false;
 }
@@ -637,6 +637,26 @@ export interface HoldoutStatusData {
 
 export interface ResearchStatusData {
   status: 'RESEARCH_READY';
+  historical_data: {
+    status: string;
+    queue_summary: { state: 'EMPTY' | 'QUEUED' | 'RUNNING' | 'COMPLETE' | 'COMPLETED_WITH_FAILURES';
+      total: number; complete: number; failed: number; active: number; pending: number; done: boolean };
+    germany40_proxy_only: true;
+    alpha_vantage_primary: false;
+    datasets: Array<{ symbol: string; timeframe: 'M1' | 'M5'; row_count: number;
+      earliest_utc: string | null; latest_utc: string | null; bid_ask_rows: number;
+      earliest_sast: string | null; latest_sast: string | null;
+      research_eligible_rows: number; source_count: number }>;
+    mappings: Array<{ symbol: string; vendor: string; vendor_symbol: string;
+      instrument_equivalence: string; qualification_allowed: boolean; review_status: string }>;
+    batches: Array<{ import_batch_id: string; symbol: string; vendor: string; source_format: string;
+      price_completeness: string; row_count: number; accepted_count: number; rejected_count: number;
+      gap_count: number; status: string; updated_at_utc: string }>;
+    jobs: Array<{ backfill_job_id: string; symbol: string; vendor: string; vendor_symbol: string;
+      partition_start_utc: string; partition_end_utc: string; source_format: string;
+      partition_start_sast: string; partition_end_sast: string;
+      status: string; attempt_count: number; last_error_code: string | null }>;
+  };
   execution_enabled: false;
   required_feature_rows: number;
   markets: ResearchMarket[];
