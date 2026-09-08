@@ -9,9 +9,10 @@ from app.config import Settings
 from app.dukascopy_tick_import import import_dukascopy_ticks
 from app.email_delivery import send_email
 from app.historical_backfill import (claim_completion_notification, claim_next, download_partition,
-                                     record_completion_notification, recover_stale_claims,
+                                     claim_progress_notification, record_completion_notification, recover_stale_claims,
                                      resource_gate, update_job)
 from app.historical_validation import validate_partition
+from app.m1_m5_reconciliation import reconcile_batch_to_accepted_m5
 
 logger=logging.getLogger("aurex.historical_backfill")
 
@@ -44,15 +45,20 @@ class HistoricalBackfillWorker:
                     vendor_symbol=str(job["vendor_symbol"]),requested_start=job["partition_start_utc"].replace(tzinfo=timezone.utc),
                     requested_end=job["partition_end_utc"].replace(tzinfo=timezone.utc))
                 validation=validate_partition(self.settings,str(result["import_batch_id"]))
+                reconciliation=reconcile_batch_to_accepted_m5(
+                    self.settings, str(result["import_batch_id"]),
+                )
                 if validation["status"] != "VALIDATED":
                     raise RuntimeError("PARTITION_VALIDATION_FAILED")
                 update_job(self.settings,job_id,"COMPLETE",import_batch_id=str(result["import_batch_id"]))
-                logger.info("partition imported as unverified evidence",extra={"operation":"backfill.partition","result":"COMPLETE"})
+                logger.info("partition imported as unverified evidence",extra={
+                    "operation":"backfill.partition","result":f"COMPLETE:{reconciliation['primary']['m5_source']}"})
             except Exception as exc:
                 retry=int(job["attempt_count"])<self.settings.historical_backfill_max_attempts
                 update_job(self.settings,job_id,"RETRY_PENDING" if retry else "FAILED",
                            error_code=type(exc).__name__,error_detail=str(exc))
                 logger.exception("historical partition failed")
+            self._notify_progress()
             self._notify_if_finished()
             self.stopped.wait(5)
 
@@ -82,3 +88,29 @@ class HistoricalBackfillWorker:
             # Notification delivery must never turn a successfully imported partition into a retry.
             record_completion_notification(self.settings,str(summary["notification_key"]),sent=False,error_detail=str(exc))
             logger.exception("historical backfill completion email failed")
+
+    def _notify_progress(self) -> None:
+        if not self.settings.smtp_configured:
+            return
+        recipient=self.settings.trade_report_recipient or self.settings.owner_email or self.settings.smtp_from_email
+        if not recipient:
+            return
+        summary=claim_progress_notification(self.settings)
+        if not summary:
+            return
+        failed=int(summary["failed"])
+        subject=("Aurex historical backfill issue" if summary["terminal_state"] == "ISSUE"
+                 else "Aurex historical backfill progress")
+        detail=(f"{failed} partition(s) require attention." if failed else
+                "No terminal partition failures are currently recorded.")
+        try:
+            send_email(self.settings,recipient=recipient,subject=subject,
+                       plain_text=(f"Historical import progress: {summary['percent']}% "
+                                   f"({summary['terminal']} of {summary['total']} terminal). "
+                                   f"Completed: {summary['complete']}; failed: {failed}. {detail} "
+                                   "Downloaded does not mean research eligible; validation remains independent."))
+            record_completion_notification(self.settings,str(summary["notification_key"]),sent=True)
+        except Exception as exc:
+            record_completion_notification(self.settings,str(summary["notification_key"]),sent=False,
+                                           error_detail=str(exc))
+            logger.exception("historical backfill progress email failed")

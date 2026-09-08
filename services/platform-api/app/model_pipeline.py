@@ -367,12 +367,20 @@ def chronological_evaluate(
 
 def _market_frame(cursor: object, market_id: str) -> pd.DataFrame:
     cursor.execute(
-        """SELECT open_time_utc,[open],high,low,[close],tick_count,source,
+        """;WITH canonical AS (
+             SELECT open_time_utc,[open],high,low,[close],tick_count,source,spread_close,
+                    ROW_NUMBER() OVER(PARTITION BY open_time_utc ORDER BY
+                      CASE WHEN source LIKE 'IG_LIGHTSTREAMER%%' THEN 1
+                           WHEN source='IG_DEMO_HISTORICAL' THEN 2
+                           WHEN source LIKE 'DUKASCOPY%%' THEN 3 ELSE 9 END,
+                      COALESCE(ingested_at_utc,created_at_utc) DESC) source_rank
+             FROM app.candles
+             WHERE market_id=%s AND timeframe='M15' AND completed=1 AND quality_status='PASS'
+               AND is_regular_session=1)
+           SELECT open_time_utc,[open],high,low,[close],tick_count,source,
                   CASE WHEN spread_close IS NOT NULL AND [close]>0
                        THEN spread_close/[close]*10000 END observed_spread_bps
-           FROM app.candles
-           WHERE market_id=%s AND timeframe='M15' AND completed=1 AND quality_status='PASS'
-             AND is_regular_session=1
+           FROM canonical WHERE source_rank=1
            ORDER BY open_time_utc""",
         (market_id,),
     )

@@ -118,6 +118,43 @@ def queue_summary(settings: Settings) -> dict[str, int | bool]:
             "done":bool(total and complete+failed==total)}
 
 
+def claim_progress_notification(settings: Settings) -> dict[str, object] | None:
+    """Claim one issue or 10% milestone update; routine polling stays silent."""
+    summary = queue_summary(settings)
+    total = int(summary["total"]); complete = int(summary["complete"])
+    failed = int(summary["failed"]); terminal = complete + failed
+    if not total or bool(summary["done"]):
+        return None
+    milestone = (terminal * 10 // total) * 10
+    candidates = []
+    if failed:
+        candidates.append((f"HISTORICAL_BACKFILL_V2:ISSUE:{total}:{failed}", "ISSUE"))
+    if milestone >= 10:
+        candidates.append((f"HISTORICAL_BACKFILL_V2:PROGRESS:{total}:{milestone}",
+                           f"PROGRESS_{milestone}_PERCENT"))
+    if not candidates:
+        return None
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        for key, state in candidates:
+            cursor.execute(
+                """IF NOT EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
+                                  WHERE notification_key=%s)
+                   BEGIN
+                     INSERT app.historical_backfill_notifications(notification_key,terminal_state,total_partitions,
+                       complete_partitions,failed_partitions,claimed_at_utc,delivery_status)
+                     VALUES(%s,%s,%s,%s,%s,SYSUTCDATETIME(),'CLAIMED'); SELECT 1
+                   END ELSE SELECT 0""",
+                (key, key, state, total, complete, failed),
+            )
+            if bool(cursor.fetchone()[0]):
+                connection.commit()
+                return {**summary, "notification_key": key, "terminal_state": state,
+                        "terminal": terminal, "percent": terminal * 100 // total}
+        connection.commit()
+    return None
+
+
 def claim_completion_notification(settings: Settings) -> dict[str, object] | None:
     """Atomically claim the terminal queue notice once, including failure completion."""
     summary = queue_summary(settings)
@@ -156,23 +193,57 @@ def record_completion_notification(settings: Settings, notification_key: str, *,
 
 
 def download_partition(cli: Path, output_root: Path, job: dict[str, object]) -> Path:
+    """Download a monthly partition as resumable bounded UTC-day slices."""
     job_id=str(job["backfill_job_id"]); output_root.mkdir(parents=True,exist_ok=True)
-    filename=f"{job_id}.csv"
-    start=job["partition_start_utc"].strftime("%Y-%m-%d")
-    end=job["partition_end_utc"].strftime("%Y-%m-%d")
-    command=[str(cli),"-i",str(job["vendor_symbol"]).lower(),"-from",start,"-to",end,
-             "-t","tick","-p","bid","-utc","0","-f","csv","-dir",str(output_root),
-             "-bs","1","-bp","2500","-r","3","-rp","15000","-fr","-fn",filename]
-    for candidate in (output_root/filename,output_root/f"{filename}.csv"):
-        if candidate.is_file():
-            candidate.unlink()
-    completed=subprocess.run(command,capture_output=True,text=True,timeout=7200,check=False,
-                             creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-    if completed.returncode:
-        detail=(completed.stderr or completed.stdout or "no downloader diagnostics")[-700:]
-        raise RuntimeError(f"DOWNLOADER_EXIT_{completed.returncode}: {detail}")
-    candidates=[output_root/filename,output_root/f"{filename}.csv"]
-    result=next((path for path in candidates if path.is_file()),None)
-    if result is None or result.stat().st_size==0:
+    daily_root=output_root/"daily"/job_id; daily_root.mkdir(parents=True,exist_ok=True)
+    point=job["partition_start_utc"]
+    boundary=job["partition_end_utc"]
+    daily_files: list[Path] = []
+    while point < boundary:
+        day_end=min(point+timedelta(days=1),boundary)
+        filename=f"{str(job['vendor_symbol']).lower()}-{point:%Y%m%d}.csv"
+        marker=daily_root/f"{filename}.done"
+        candidates=(daily_root/filename,daily_root/f"{filename}.csv")
+        result=next((path for path in candidates if path.is_file()),candidates[0])
+        if not marker.is_file():
+            for candidate in candidates:
+                if candidate.is_file():
+                    candidate.unlink()
+            command=[str(cli),"-i",str(job["vendor_symbol"]).lower(),
+                     "-from",point.strftime("%Y-%m-%d"),"-to",day_end.strftime("%Y-%m-%d"),
+                     "-t","tick","-p","bid","-utc","0","-f","csv","-dir",str(daily_root),
+                     "-bs","1","-bp","2500","-r","3","-rp","15000","-fr","-fn",filename]
+            completed=subprocess.run(command,capture_output=True,text=True,timeout=900,check=False,
+                                     creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            if completed.returncode:
+                detail=(completed.stderr or completed.stdout or "no downloader diagnostics")[-700:]
+                raise RuntimeError(f"DOWNLOADER_EXIT_{completed.returncode}:{point:%Y-%m-%d}: {detail}")
+            result=next((path for path in candidates if path.is_file()),None)
+            if result is None:
+                # Closed days can legitimately produce no payload. Retain an
+                # explicit empty slice plus marker so restarts do not retry it.
+                result=candidates[0]; result.touch()
+            marker.touch()
+        daily_files.append(result)
+        point=day_end
+    target=output_root/f"{job_id}.csv.csv"
+    partial=target.with_suffix(target.suffix+".partial")
+    data_rows=0
+    with partial.open("wb") as combined:
+        combined.write(b"timestamp,askPrice,bidPrice\n")
+        for path in daily_files:
+            with path.open("rb") as source:
+                first=True
+                for line in source:
+                    if first:
+                        first=False
+                        if line.lower().startswith(b"timestamp,"):
+                            continue
+                    if line.strip():
+                        combined.write(line if line.endswith(b"\n") else line+b"\n")
+                        data_rows += 1
+    if not data_rows:
+        partial.unlink(missing_ok=True)
         raise RuntimeError("DOWNLOAD_OUTPUT_MISSING")
-    return result
+    partial.replace(target)
+    return target
