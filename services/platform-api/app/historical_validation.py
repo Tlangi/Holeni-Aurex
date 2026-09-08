@@ -128,9 +128,11 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
              json.dumps(details, sort_keys=True), int(eligible), import_batch_id),
         )
         cursor.execute(
-            """UPDATE app.market_candles_m1 SET quality_state=%s,research_eligible=%s
+            """UPDATE app.market_candles_m1 SET quality_state=%s,research_eligible=%s,
+                 instrument_equivalence=%s
                WHERE import_batch_id=%s""",
-            ("VALIDATED" if eligible else "UNVERIFIED", int(eligible), import_batch_id),
+            ("VALIDATED" if eligible else "UNVERIFIED", int(eligible),
+             str(batch["instrument_equivalence"] or "UNVERIFIED"), import_batch_id),
         )
         connection.commit()
     return {
