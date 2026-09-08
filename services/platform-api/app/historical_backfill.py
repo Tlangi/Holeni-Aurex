@@ -138,14 +138,21 @@ def claim_progress_notification(settings: Settings) -> dict[str, object] | None:
         cursor = connection.cursor()
         for key, state in candidates:
             cursor.execute(
-                """IF NOT EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
-                                  WHERE notification_key=%s)
+                """IF EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
+                              WHERE notification_key=%s AND delivery_status='FAILED'
+                                AND claimed_at_utc<DATEADD(minute,-15,SYSUTCDATETIME()))
+                   BEGIN
+                     UPDATE app.historical_backfill_notifications SET delivery_status='CLAIMED',
+                       claimed_at_utc=SYSUTCDATETIME(),error_detail=NULL WHERE notification_key=%s; SELECT 1
+                   END
+                   ELSE IF NOT EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
+                                      WHERE notification_key=%s)
                    BEGIN
                      INSERT app.historical_backfill_notifications(notification_key,terminal_state,total_partitions,
                        complete_partitions,failed_partitions,claimed_at_utc,delivery_status)
                      VALUES(%s,%s,%s,%s,%s,SYSUTCDATETIME(),'CLAIMED'); SELECT 1
                    END ELSE SELECT 0""",
-                (key, key, state, total, complete, failed),
+                (key, key, key, key, state, total, complete, failed),
             )
             if bool(cursor.fetchone()[0]):
                 connection.commit()
@@ -165,14 +172,21 @@ def claim_completion_notification(settings: Settings) -> dict[str, object] | Non
     with open_database(settings) as connection:
         cursor = connection.cursor()
         cursor.execute(
-            """IF NOT EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
-                              WHERE notification_key=%s)
+            """IF EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
+                          WHERE notification_key=%s AND delivery_status='FAILED'
+                            AND claimed_at_utc<DATEADD(minute,-15,SYSUTCDATETIME()))
+               BEGIN
+                 UPDATE app.historical_backfill_notifications SET delivery_status='CLAIMED',
+                   claimed_at_utc=SYSUTCDATETIME(),error_detail=NULL WHERE notification_key=%s; SELECT 1
+               END
+               ELSE IF NOT EXISTS(SELECT 1 FROM app.historical_backfill_notifications WITH(UPDLOCK,HOLDLOCK)
+                                  WHERE notification_key=%s)
                BEGIN
                  INSERT app.historical_backfill_notifications(notification_key,terminal_state,total_partitions,
                    complete_partitions,failed_partitions,claimed_at_utc,delivery_status)
                  VALUES(%s,%s,%s,%s,%s,SYSUTCDATETIME(),'CLAIMED'); SELECT 1
                END ELSE SELECT 0""",
-            (key, key, terminal_state, summary["total"], summary["complete"], summary["failed"]),
+            (key, key, key, key, terminal_state, summary["total"], summary["complete"], summary["failed"]),
         )
         claimed = bool(cursor.fetchone()[0])
         connection.commit()
