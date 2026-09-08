@@ -97,7 +97,7 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
             )
 
         comparison = _reconcile_partition(cursor, batch, import_batch_id, start, end, settings)
-        cross_pass = comparison["status"] == "PASS"
+        cross_pass = comparison["primary"]["status"] == "PASS"
         mapping_pass = bool(batch["qualification_allowed"]) and str(batch["review_status"]) in {"APPROVED", "VERIFIED"}
         eligible = structural_pass and calendar_pass and cross_pass and mapping_pass
         if eligible:
@@ -113,7 +113,9 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
         details = {
             "structural_pass": structural_pass, "calendar_pass": calendar_pass,
             "cross_source_pass": cross_pass, "mapping_pass": mapping_pass,
-            "rejected_tick_ratio": float(rejected_ratio), "comparison_status": comparison["status"],
+            "rejected_tick_ratio": float(rejected_ratio),
+            "comparison_status": comparison["primary"]["status"],
+            "comparisons": comparison["comparisons"],
         }
         cursor.execute(
             """UPDATE app.historical_import_batches SET expected_trading_minutes=%s,
@@ -144,16 +146,57 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
 
 
 def _reconcile_partition(cursor, batch, import_batch_id: str, start, end, settings: Settings) -> dict[str, object]:
-    source = str(batch["vendor"])
+    vendor = str(batch["vendor"]).upper()
+    primary_prefix = "HISTDATA" if vendor == "DUKASCOPY" else "DUKASCOPY"
     cursor.execute(
-        """SELECT a.timestamp_utc,a.mid_open,a.mid_high,a.mid_low,a.mid_close,
-                  b.mid_open AS other_open,b.mid_high AS other_high,b.mid_low AS other_low,b.mid_close AS other_close
+        "DELETE FROM app.historical_partition_reconciliations "
+        "WHERE import_batch_id=%s AND comparison_source='INDEPENDENT_M1'",
+        (import_batch_id,),
+    )
+    cursor.execute(
+        """SELECT DISTINCT b.source
            FROM app.market_candles_m1 a
-           JOIN app.market_candles_m1 b ON b.market_id=a.market_id AND b.timestamp_utc=a.timestamp_utc
+           JOIN app.market_candles_m1 b ON b.market_id=a.market_id
              AND b.import_batch_id<>a.import_batch_id
            WHERE a.import_batch_id=%s AND a.timestamp_utc>=%s AND a.timestamp_utc<%s
+             AND b.timestamp_utc>=%s AND b.timestamp_utc<%s
              AND b.source NOT LIKE %s""",
-        (import_batch_id, start, end, f"{source}%"),
+        (import_batch_id, start, end, start, end, f"{vendor}%"),
+    )
+    sources = sorted(str(row["source"]) for row in cursor.fetchall())
+    # IG is an explicit governed evidence lane. Persist absence instead of allowing
+    # another independent vendor to make an aggregate comparison appear complete.
+    if not any(source.startswith("IG") for source in sources):
+        sources.append("IG_M1")
+    comparisons = [
+        _reconcile_source(cursor, batch, import_batch_id, start, end, settings, source)
+        for source in sources
+    ]
+    primary = next(
+        (comparison for comparison in comparisons
+         if str(comparison["comparison_source"]).startswith(primary_prefix)),
+        {"comparison_source": primary_prefix, "status": "NO_OVERLAP",
+         "comparable_candles": 0, "within_tolerance": 0, "match_percentage": None},
+    )
+    return {"primary": primary, "comparisons": comparisons}
+
+
+def _reconcile_source(cursor, batch, import_batch_id: str, start, end,
+                      settings: Settings, comparison_source: str) -> dict[str, object]:
+    cursor.execute(
+        """SELECT a.timestamp_utc,COALESCE(a.mid_open,a.bid_open) mid_open,
+                  COALESCE(a.mid_high,a.bid_high) mid_high,COALESCE(a.mid_low,a.bid_low) mid_low,
+                  COALESCE(a.mid_close,a.bid_close) mid_close,
+                  COALESCE(b.mid_open,b.bid_open) AS other_open,
+                  COALESCE(b.mid_high,b.bid_high) AS other_high,
+                  COALESCE(b.mid_low,b.bid_low) AS other_low,
+                  COALESCE(b.mid_close,b.bid_close) AS other_close
+           FROM app.market_candles_m1 a
+           JOIN app.market_candles_m1 b ON b.market_id=a.market_id AND b.timestamp_utc=a.timestamp_utc
+             AND b.import_batch_id<>a.import_batch_id AND b.source=%s
+           WHERE a.import_batch_id=%s AND a.timestamp_utc>=%s AND a.timestamp_utc<%s
+             """,
+        (comparison_source, import_batch_id, start, end),
     )
     rows = cursor.fetchall()
     tolerance = Decimal(str(settings.historical_cross_source_tolerance_ratio))
@@ -174,18 +217,22 @@ def _reconcile_partition(cursor, batch, import_batch_id: str, start, end, settin
     else:
         status = "PASS" if match is not None and match >= Decimal(str(settings.historical_minimum_cross_source_match)) else "FAIL"
     averages = [sum((row[index] for row in deltas), Decimal(0)) / Decimal(comparable) if comparable else None for index in range(4)]
-    cursor.execute("DELETE FROM app.historical_partition_reconciliations WHERE import_batch_id=%s AND comparison_source='INDEPENDENT_M1'", (import_batch_id,))
+    cursor.execute(
+        "DELETE FROM app.historical_partition_reconciliations WHERE import_batch_id=%s AND comparison_source=%s",
+        (import_batch_id, comparison_source),
+    )
     cursor.execute(
         """INSERT app.historical_partition_reconciliations(
              historical_partition_reconciliation_id,import_batch_id,market_id,comparison_source,
              partition_start_utc,partition_end_utc,comparison_start_utc,comparison_end_utc,
              comparable_candles,within_tolerance_candles,match_percentage,open_delta,high_delta,
              low_delta,close_delta,timestamp_aligned,coverage_overlap,status)
-           VALUES(%s,%s,%s,'INDEPENDENT_M1',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s)""",
-        (str(uuid4()), import_batch_id, str(batch["market_id"]), start, end,
+           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,%s,%s)""",
+        (str(uuid4()), import_batch_id, str(batch["market_id"]), comparison_source, start, end,
          start if comparable else None, end if comparable else None, comparable, within, match,
          averages[0], averages[1], averages[2], averages[3],
          Decimal(comparable) / Decimal(max(1, int(batch["accepted_count"] or 0))), status),
     )
-    return {"status": status, "comparable_candles": comparable, "within_tolerance": within,
+    return {"comparison_source": comparison_source, "status": status,
+            "comparable_candles": comparable, "within_tolerance": within,
             "match_percentage": float(match) if match is not None else None}

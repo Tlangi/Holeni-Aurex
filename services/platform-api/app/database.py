@@ -11,7 +11,7 @@ class DatabaseUnavailable(RuntimeError):
 
 
 @contextmanager
-def open_database(settings: Settings) -> Iterator[pymssql.Connection]:
+def open_database(settings: Settings, *, query_timeout_seconds: int = 10) -> Iterator[pymssql.Connection]:
     try:
         connection = pymssql.connect(
             server=settings.sql_host,
@@ -20,7 +20,7 @@ def open_database(settings: Settings) -> Iterator[pymssql.Connection]:
             password=settings.sql_password,
             database=settings.sql_database,
             login_timeout=5,
-            timeout=10,
+            timeout=query_timeout_seconds,
             autocommit=False,
         )
     except pymssql.Error as exc:
