@@ -42,6 +42,12 @@ class _ConnectionListener:
     def onServerError(self, code: int, message: str) -> None:
         logger.error("IG streaming server error", extra={"operation": "ig.stream", "result": str(code)})
 
+    # The Python Lightstreamer client invokes the complete listener contract
+    # directly; absent optional callbacks otherwise raise on its event thread.
+    def onListenStart(self) -> None: pass
+    def onListenEnd(self) -> None: pass
+    def onPropertyChange(self, property: str) -> None: pass
+
 
 class _PriceListener:
     def __init__(self, feed: "IGMarketStream") -> None:
@@ -52,6 +58,21 @@ class _PriceListener:
 
     def onSubscriptionError(self, code: int, message: str) -> None:
         logger.error("IG price subscription failed", extra={"operation": "ig.stream.subscribe", "result": str(code)})
+
+    def onListenStart(self) -> None: pass
+    def onListenEnd(self) -> None: pass
+    def onSubscription(self) -> None: pass
+    def onUnsubscription(self) -> None: pass
+    def onClearSnapshot(self, itemName: str, itemPos: int) -> None: pass
+    def onEndOfSnapshot(self, itemName: str, itemPos: int) -> None: pass
+    def onItemLostUpdates(self, itemName: str, itemPos: int, lostUpdates: int) -> None:
+        logger.warning(
+            "IG price updates lost",
+            extra={"operation": "ig.stream.loss", "result": f"{itemName}:{lostUpdates}"},
+        )
+    def onRealMaxFrequency(self, frequency: str) -> None: pass
+    def onCommandSecondLevelSubscriptionError(self, code: int, message: str, key: str) -> None: pass
+    def onCommandSecondLevelItemLostUpdates(self, lostUpdates: int, key: str) -> None: pass
 
 
 class IGMarketStream:
@@ -67,6 +88,7 @@ class IGMarketStream:
         self.last_update_at: datetime | None = None
         self.latest_event_bucket: datetime | None = None
         self._pending: dict[tuple[str, str], tuple[datetime, list[Decimal], list[Decimal], list[Decimal], int]] = {}
+        self._last_live_write_at: dict[tuple[str, str], datetime] = {}
         self._lock = Lock()
         with open_database(settings) as connection:
             cursor = connection.cursor()
@@ -141,12 +163,26 @@ class IGMarketStream:
             self.latest_event_bucket = opened
         ticks = int(_number(update, "LTV") or 0)
         completed = update.getValue("CONS_END") == "1"
+        received_at = datetime.now(timezone.utc)
         with self._lock:
             pending_key = (epic, timeframe)
             previous = self._pending.get(pending_key)
             if previous and opened > previous[0]:
                 self._persist(market, timeframe, minutes, *previous)
-            self._persist_live(market, timeframe, opened, values, bid, offer, ticks, completed)
+            # Lightstreamer can emit many price changes per second. A SQL write
+            # per tick blocks its single callback thread and makes the event
+            # clock fall progressively behind. Coalesce mutable browser
+            # snapshots, while always publishing rollovers/completed candles.
+            last_live_write = getattr(self, "_last_live_write_at", {}).get(pending_key)
+            publish_live = (
+                completed or previous is None or opened > previous[0] or last_live_write is None
+                or received_at - last_live_write >= timedelta(seconds=30)
+            )
+            if publish_live:
+                self._persist_live(market, timeframe, opened, values, bid, offer, ticks, completed)
+                if not hasattr(self, "_last_live_write_at"):
+                    self._last_live_write_at = {}
+                self._last_live_write_at[pending_key] = received_at
             self._pending[pending_key] = (opened, values, bid, offer, ticks)
             if completed:
                 self._persist(market, timeframe, minutes, opened, values, bid, offer, ticks)
