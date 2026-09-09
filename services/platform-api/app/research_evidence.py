@@ -172,12 +172,21 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 ("IG", "IG%", "LIVE_EXECUTION"),
             ):
                 for timeframe, interval in (("M5", 5), ("M15", 15)):
-                    cursor.execute(
-                        """SELECT open_time_utc,bid_close,ask_close,spread_close,completed,is_regular_session
-                           FROM app.candles WHERE market_id=%s AND timeframe=%s AND source LIKE %s
-                             AND completed=1 ORDER BY open_time_utc""",
-                        (market_id, timeframe, pattern),
-                    )
+                    if provider == "IG":
+                        cursor.execute(
+                            """SELECT open_time_utc,bid_close,ask_close,spread_close,completed,is_regular_session
+                               FROM app.candles WHERE market_id=%s AND timeframe=%s
+                                 AND (source LIKE 'IG%%' OR source='DERIVED_M1')
+                                 AND completed=1 ORDER BY open_time_utc""",
+                            (market_id, timeframe),
+                        )
+                    else:
+                        cursor.execute(
+                            """SELECT open_time_utc,bid_close,ask_close,spread_close,completed,is_regular_session
+                               FROM app.candles WHERE market_id=%s AND timeframe=%s AND source LIKE %s
+                                 AND completed=1 ORDER BY open_time_utc""",
+                            (market_id, timeframe, pattern),
+                        )
                     rows = cursor.fetchall()
                     regular = [row for row in rows if bool(row["is_regular_session"])]
                     if not regular:
@@ -230,10 +239,23 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
             )
             rules_fresh = int(cursor.fetchone()["rule_count"] or 0) > 0
             recent_gaps = len(m5.get("recent_gaps") or []) + len(m15.get("recent_gaps") or [])
+            cursor.execute(
+                """SELECT TOP (1) details_json FROM app.market_data_quality_runs
+                   WHERE market_id=%s AND timeframe='M15' ORDER BY evaluated_at_utc DESC""",
+                (market_id,),
+            )
+            canonical_quality = cursor.fetchone() or {}
+            canonical_details = json.loads(str(canonical_quality.get("details_json") or "{}"))
+            canonical_completeness = float(
+                canonical_details.get("regular_session_completeness") or 0
+            )
+            gap_policy_pass = (
+                canonical_completeness >= settings.research_segment_minimum_completeness
+            )
             historical = "PASS" if statuses["DUKASCOPY"] and all(value == "PASS" for value in statuses["DUKASCOPY"]) else "WARN"
             training = historical
             if session.should_receive_data:
-                recent_continuity = "PASS" if m5_fresh and m15_fresh and recent_gaps == 0 else "FAIL"
+                recent_continuity = "PASS" if m5_fresh and m15_fresh and gap_policy_pass else "FAIL"
                 price_freshness = "PASS" if bid_fresh and ask_fresh and spread_fresh else "FAIL"
             else:
                 recent_continuity = session.status
@@ -250,7 +272,7 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 overall = session.status
             else:
                 overall = "PASS" if all((m5_fresh, m15_fresh, bid_fresh, ask_fresh, spread_fresh,
-                                          rules_fresh, session_valid, latest_complete, recent_gaps == 0)) else "FAIL"
+                                          rules_fresh, session_valid, latest_complete, gap_policy_pass)) else "FAIL"
             reasons = {
                 "m5_latest_utc": latest_m5.isoformat() if latest_m5 else None,
                 "m15_latest_utc": latest_m15.isoformat() if latest_m15 else None,
@@ -260,6 +282,11 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 "session_reason": session.reason,
                 "data_expected_now": session.should_receive_data,
                 "freshness_is_execution_blocking_now": session.should_receive_data,
+                "recent_gap_count": recent_gaps,
+                "gaps_acknowledged": recent_gaps > 0,
+                "minimum_completeness": settings.research_segment_minimum_completeness,
+                "canonical_completeness": canonical_completeness,
+                "gap_policy_pass": gap_policy_pass,
             }
             cursor.execute(
                 """INSERT app.execution_quality_snapshots

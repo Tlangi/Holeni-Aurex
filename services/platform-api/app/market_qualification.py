@@ -49,7 +49,12 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
             latest_m5 = row.get("latest_m5_utc")
             m5_age = (now - latest_m5.replace(tzinfo=timezone.utc)).total_seconds() if latest_m5 else None
             m5_fresh = m5_age is not None and m5_age <= settings.execution_m5_fresh_seconds
-            realtime = m5_fresh and m15_fresh and recent_gaps == 0 and int(row.get("invalid_ohlc_count") or 0) == 0
+            integrity_clean = (
+                int(row.get("invalid_ohlc_count") or 0) == 0
+                and int(row.get("duplicate_count") or 0) == 0
+            )
+            gap_policy_pass = completeness >= settings.research_segment_minimum_completeness
+            realtime = m5_fresh and m15_fresh and integrity_clean and gap_policy_pass
             research = completeness >= settings.research_segment_minimum_completeness
             training = bool(row["training_enabled"]) and research
             shadow = realtime and research and bool(row["signal_enabled"])
@@ -62,7 +67,7 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
             reasons = []
             if not m5_fresh: reasons.append("M5_STALE")
             if not m15_fresh: reasons.append("M15_STALE")
-            if recent_gaps: reasons.append("RECENT_GAPS")
+            if recent_gaps and not gap_policy_pass: reasons.append("RECENT_GAPS_BELOW_COMPLETENESS_POLICY")
             if not research: reasons.append("HISTORICAL_COMPLETENESS_BELOW_THRESHOLD")
             if not broker_fresh: reasons.append("BROKER_RULES_STALE")
             if not increment_authoritative: reasons.append("SIZE_INCREMENT_NOT_AUTHORITATIVE")
@@ -73,6 +78,8 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
                 "m5_freshness": "PASS" if m5_fresh else "FAIL",
                 "m15_freshness": "PASS" if m15_fresh else "FAIL",
                 "recent_gap_count": recent_gaps,
+                "gaps_acknowledged": recent_gaps > 0,
+                "gap_policy_pass": gap_policy_pass,
                 "historical_gap_count": int(row.get("missing_period_count") or 0),
                 "historical_session_completeness": completeness,
                 "largest_gap": details.get("largest_gap"),

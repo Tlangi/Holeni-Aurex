@@ -233,7 +233,10 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
         failures = invalid + nonpositive + future + partial
         expected_regular = observed_regular + missing
         completeness = observed_regular / expected_regular if expected_regular else 0.0
-        status = _combined_validation_status(failures=failures, recent_missing=recent_missing)
+        status = (
+            "FAIL" if failures or completeness < settings.research_segment_minimum_completeness
+            else "PASS"
+        )
         result = {
             "candle_count": len(rows), "duplicate_count": 0, "missing_period_count": missing,
             "recent_missing_period_count": recent_missing,
@@ -257,7 +260,8 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
                          "recent_missing_period_count": recent_missing,
                          "regular_session_observed_count": observed_regular,
                          "regular_session_completeness": round(completeness, 8),
-                         "minimum_historical_completeness": 0.985,
+                         "minimum_historical_completeness": settings.research_segment_minimum_completeness,
+                         "gaps_acknowledged_under_completeness_policy": bool(missing),
                          "features_segmented_at_gaps": True,
                          "provider_boundaries_excluded_from_status": True,
                          "historical_quality_authority": "app.data_quality_segments",

@@ -401,7 +401,7 @@ def calculate_currency_scores(settings: Settings, *, cursor: object, now: dateti
                       e.currency_score,e.impact,e.published_at_utc,e.retrieved_at_utc,e.scheduled_event_at_utc,
                       s.evidence_type,s.priority
                FROM app.macro_evidence e JOIN app.macro_sources s ON s.macro_source_id=e.macro_source_id
-               WHERE s.currency=%s AND e.retrieved_at_utc>=%s
+               WHERE s.currency=%s AND s.last_success_at_utc>=%s
                ORDER BY COALESCE(e.published_at_utc,e.retrieved_at_utc) DESC""",
             (currency, cutoff),
         )

@@ -135,7 +135,9 @@ class Settings(BaseSettings):
     execution_quote_fresh_seconds: int = 900
     broker_rule_fresh_seconds: int = 86400
     execution_gap_lookback_hours: int = 24
-    research_segment_minimum_completeness: float = 0.985
+    # Missing intervals remain explicit, but a clean segment is research
+    # eligible once at least 99% of its expected session candles exist.
+    research_segment_minimum_completeness: float = 0.99
     cost_model_minimum_observations: int = 50
     cost_model_optimistic_percentile: float = 50.0
     cost_model_normal_percentile: float = 75.0
