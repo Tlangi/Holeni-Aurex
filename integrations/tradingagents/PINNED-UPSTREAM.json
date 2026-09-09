@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/TauricResearch/TradingAgents.git",
+  "release": "v0.4.0",
+  "version": "0.4.0",
+  "commit": "c95f83dfafa748801ab2be4855e6fcffc93804e4",
+  "license": "Apache-2.0",
+  "resolved_utc": "2026-09-09T00:00:00Z",
+  "integration_mode": "AUREX_APPROVED_CONTEXT_ONLY",
+  "native_external_data": false,
+  "execution_authority": "NONE"
+}

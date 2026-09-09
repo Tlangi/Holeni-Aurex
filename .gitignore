@@ -57,3 +57,7 @@ operations/backups/
 .idea/
 Thumbs.db
 .DS_Store
+# Isolated TradingAgents runtime; reproduced from the pinned manifest/bootstrap.
+integrations/tradingagents/upstream/
+integrations/tradingagents/.venv/
+integrations/tradingagents/runtime/

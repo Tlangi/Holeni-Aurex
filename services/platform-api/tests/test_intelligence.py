@@ -47,6 +47,16 @@ def test_malformed_or_unknown_agent_output_is_rejected() -> None:
 
 
 def test_optional_provider_is_degraded_without_secret() -> None:
-    status = provider_status(Settings(intelligence_enabled=True, llm_provider="openai", llm_model_fast="x"))
-    assert status["state"] == "DEGRADED" and status["configured"] is False
+    status = provider_status(Settings(intelligence_enabled=True, llm_provider="openai_compatible",
+                                      llm_model_fast="x", llm_base_url="http://127.0.0.1:11434/v1"))
+    assert status["state"] == "CONFIGURED" and status["configured"] is True
     assert status["credentials_exposed"] is False
+
+
+def test_public_llm_provider_is_rejected_in_local_only_mode() -> None:
+    with pytest.raises(ValidationError, match="PROVIDER_NOT_LOCAL"):
+        Settings(intelligence_enabled=True, llm_provider="openai", llm_model_fast="x",
+                 llm_base_url="https://api.openai.com/v1")
+    with pytest.raises(ValidationError, match="CONFIG_REJECTED_EXTERNAL_ENDPOINT"):
+        Settings(intelligence_enabled=True, llm_provider="openai_compatible",
+                 llm_model_fast="x", llm_base_url="https://llm.example/v1")

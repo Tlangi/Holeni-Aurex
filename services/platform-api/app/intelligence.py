@@ -90,6 +90,7 @@ def provider_status(settings: Settings) -> dict[str, object]:
     configured = settings.intelligence_provider_configured
     state = "DISABLED" if not settings.intelligence_enabled else "CONFIGURED" if configured else "DEGRADED"
     return {"provider": settings.llm_provider.lower(), "state": state, "configured": configured,
+            "mode": "LOCAL_ONLY" if settings.intelligence_local_only else "UNSAFE_NOT_LOCAL_ONLY",
             "fast_model": settings.llm_model_fast or None, "deep_model": settings.llm_model_deep or None,
             "timeout_seconds": settings.llm_timeout_seconds, "max_retries": settings.llm_max_retries,
             "credentials_exposed": False}
@@ -148,6 +149,23 @@ def read_intelligence_status(settings: Settings, tenant_id: str) -> dict[str, ob
             decisions = cursor.fetchall()
     except Exception:
         decisions = []
+    ta_state = ("DISABLED" if not settings.tradingagents_enabled else
+                "CONFIGURED" if settings.tradingagents_configured else "LOCAL_LLM_UNAVAILABLE")
+    tradingagents = {
+        "state": ta_state,
+        "enabled": settings.tradingagents_enabled,
+        "llm_mode": "LOCAL_ONLY",
+        "provider": settings.tradingagents_provider.lower(),
+        "local_model": settings.tradingagents_quick_model or settings.tradingagents_deep_model or None,
+        "endpoint": "LOCAL_PRIVATE_ENDPOINT" if settings.tradingagents_base_url else None,
+        "network_policy": "NO_EXTERNAL_LLM_EGRESS",
+        "native_external_data": "DISABLED",
+        "version": settings.tradingagents_version,
+        "commit": settings.tradingagents_commit,
+        "broker_authority": "NONE",
+        "credentials_exposed": False,
+    }
     return {"status": "RESEARCH_ONLY", "execution_authority": "NONE", "broker_access": False,
             "provider": provider_status(settings), "agents": list(AGENT_ROLES), "decisions": decisions,
+            "tradingagents": tradingagents,
             "governance": "Only audited point-in-time evidence may enter qualification; LLM output cannot approve execution."}

@@ -1,6 +1,7 @@
 from functools import lru_cache
+from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -99,6 +100,7 @@ class Settings(BaseSettings):
     macro_event_blackout_minutes: int = 60
     macro_decision_threshold: float = 0.35
     intelligence_enabled: bool = False
+    intelligence_local_only: bool = True
     llm_provider: str = "disabled"
     llm_model_fast: str = ""
     llm_model_deep: str = ""
@@ -107,6 +109,19 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = Field(default=30, ge=5, le=180)
     llm_max_retries: int = Field(default=1, ge=0, le=3)
     llm_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
+    tradingagents_enabled: bool = False
+    tradingagents_provider: str = "disabled"
+    tradingagents_base_url: str = ""
+    tradingagents_quick_model: str = ""
+    tradingagents_deep_model: str = ""
+    tradingagents_version: str = "0.4.0"
+    tradingagents_commit: str = "c95f83dfafa748801ab2be4855e6fcffc93804e4"
+    tradingagents_prompt_version: str = "aurex-forex-v1"
+    tradingagents_max_concurrent_runs: int = Field(default=1, ge=1, le=4)
+    tradingagents_max_context_chars: int = Field(default=48000, ge=2000, le=250000)
+    tradingagents_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
+    tradingagents_max_debate_rounds: int = Field(default=1, ge=0, le=3)
+    tradingagents_max_risk_rounds: int = Field(default=1, ge=0, le=3)
     historical_backfill_enabled: bool = False
     historical_backfill_poll_seconds: int = Field(default=60, ge=15, le=3600)
     historical_backfill_min_free_gb: int = Field(default=20, ge=5, le=1000)
@@ -170,7 +185,47 @@ class Settings(BaseSettings):
                 missing.append("HTTPS_WEB_ORIGINS")
             if missing:
                 raise ValueError("External deployment security requirements missing: " + ",".join(missing))
+        if self.intelligence_enabled and self.intelligence_local_only:
+            self._validate_local_llm(self.llm_provider, self.llm_base_url, "LLM")
+        if self.tradingagents_enabled:
+            self._validate_local_llm(
+                self.tradingagents_provider, self.tradingagents_base_url, "TRADINGAGENTS"
+            )
+            if not (self.tradingagents_quick_model or self.tradingagents_deep_model):
+                raise ValueError("TRADINGAGENTS_MODEL_NOT_CONFIGURED")
         return self
+
+    @staticmethod
+    def _validate_local_llm(provider: str, base_url: str, prefix: str) -> None:
+        if provider.strip().lower() not in {"ollama", "openai_compatible"}:
+            raise ValueError(f"{prefix}_PROVIDER_NOT_LOCAL")
+        parsed = urlsplit(base_url)
+        if parsed.scheme != "http" or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError(f"{prefix}_CONFIG_REJECTED_EXTERNAL_ENDPOINT")
+        host = (parsed.hostname or "").lower()
+        allowed = host in {"localhost", "127.0.0.1", "::1"}
+        if not allowed:
+            try:
+                address = ip_address(host)
+                allowed = address.is_private and not (
+                    address.is_multicast or address.is_unspecified or address.is_reserved
+                )
+            except ValueError:
+                # DNS names are intentionally excluded to avoid rebinding and
+                # accidental hosted-provider configuration in LOCAL_ONLY mode.
+                allowed = False
+        if not allowed:
+            raise ValueError(f"{prefix}_CONFIG_REJECTED_EXTERNAL_ENDPOINT")
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            return
+        try:
+            address = ip_address(host)
+        except ValueError as exc:
+            # DNS names are deliberately rejected: a private-looking name can
+            # later resolve publicly or be changed by DNS rebinding.
+            raise ValueError(f"{prefix}_CONFIG_REJECTED_EXTERNAL_ENDPOINT") from exc
+        if not address.is_private:
+            raise ValueError(f"{prefix}_CONFIG_REJECTED_EXTERNAL_ENDPOINT")
 
     @field_validator("trading_mode")
     @classmethod
@@ -296,9 +351,31 @@ class Settings(BaseSettings):
         provider = self.llm_provider.strip().lower()
         if not self.intelligence_enabled or provider in {"", "disabled"}:
             return False
-        if provider == "ollama":
+        if self.intelligence_local_only:
+            return provider in {"ollama", "openai_compatible"} and bool(
+                self.llm_base_url and (self.llm_model_fast or self.llm_model_deep)
+            )
+        if provider in {"ollama", "openai_compatible"}:
             return bool(self.llm_base_url and (self.llm_model_fast or self.llm_model_deep))
-        return bool(self.llm_api_key and (self.llm_model_fast or self.llm_model_deep))
+        return False
+
+    @property
+    def tradingagents_configured(self) -> bool:
+        return bool(
+            self.tradingagents_enabled
+            and self.tradingagents_provider.strip().lower() in {"ollama", "openai_compatible"}
+            and self.tradingagents_base_url
+            and (self.tradingagents_quick_model or self.tradingagents_deep_model)
+        )
+
+    @property
+    def tradingagents_configured(self) -> bool:
+        return bool(
+            self.tradingagents_enabled
+            and self.tradingagents_provider in {"ollama", "openai_compatible"}
+            and self.tradingagents_base_url
+            and (self.tradingagents_quick_model or self.tradingagents_deep_model)
+        )
 
     @property
     def demo_execution_configured(self) -> bool:

@@ -25,7 +25,7 @@ def decision_payload(**changes: object) -> dict[str, object]:
 
 def settings(**changes: object) -> Settings:
     values = {"intelligence_enabled": True, "llm_provider": "openai_compatible",
-              "llm_model_fast": "fixture", "llm_base_url": "https://llm.invalid/v1", "llm_api_key": "secret",
+              "llm_model_fast": "fixture", "llm_base_url": "http://127.0.0.1:11434/v1", "llm_api_key": "secret",
               "llm_max_retries": 1, "llm_circuit_failure_threshold": 2}
     values.update(changes)
     return Settings(**values)
@@ -87,3 +87,11 @@ def test_not_configured_provider_fails_closed() -> None:
     runtime = OpenAICompatibleRuntime(Settings())
     with pytest.raises(ProviderUnavailable, match="NOT_CONFIGURED"):
         asyncio.run(runtime.invoke(system_prompt="safe", user_prompt="facts"))
+
+
+def test_redirect_is_not_followed() -> None:
+    runtime = OpenAICompatibleRuntime(
+        settings(), transport=lambda *args: (302, {}, {"Location": "https://api.openai.com"})
+    )
+    with pytest.raises(ProviderUnavailable, match="PROVIDER_HTTP_302"):
+        asyncio.run(runtime.invoke(system_prompt="safe", user_prompt="synthetic facts"))

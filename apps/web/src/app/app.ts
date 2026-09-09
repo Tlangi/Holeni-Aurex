@@ -1,6 +1,6 @@
 import { afterNextRender, Component, computed, DestroyRef, ElementRef, inject, signal, ViewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, ResearchJobsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradingReadinessData, TradingStatusData } from './dashboard-api';
+import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, ResearchJobsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradeProposalsData, TradingReadinessData, TradingStatusData } from './dashboard-api';
 import { AuthApi } from './auth-api';
 import { Router } from '@angular/router';
 import { catchError, finalize, map, of, Subject, switchMap } from 'rxjs';
@@ -70,6 +70,9 @@ export class DashboardComponent {
   protected readonly shadowTrades = signal<ShadowTradesData | null>(null);
   protected readonly shadowPerformance = signal<ShadowPerformanceData | null>(null);
   protected readonly orderIntents = signal<OrderIntentsData | null>(null);
+  protected readonly tradeProposals = signal<TradeProposalsData | null>(null);
+  protected readonly proposalBusy = signal('');
+  protected readonly proposalMessage = signal('');
   protected readonly riskStatus = signal<RiskStatusData | null>(null);
   protected readonly reconciliation = signal<ReconciliationData | null>(null);
   protected readonly operationsStatus = signal<OperationsStatusData | null>(null);
@@ -129,7 +132,7 @@ export class DashboardComponent {
 
   protected readonly navigation: NavigationSection[] = [
     { group: 'Overview', items: [{ label: 'Dashboard', icon: 'grid', target: 'dashboard-top', active: true }] },
-    { group: 'Trading', items: [{ label: 'Market data', icon: 'chart', target: 'market-data' }, { label: 'Macro intelligence', icon: 'globe', target: 'macro-intelligence' }, { label: 'Model readiness', icon: 'gauge', target: 'model-readiness' }, { label: 'Forward evidence', icon: 'trend', target: 'forward-evidence' }, { label: 'Replay laboratory', icon: 'clock', target: 'replay-laboratory' }, { label: 'Shadow trades', icon: 'trend', target: 'shadow-trades' }, { label: 'Strategies', icon: 'gauge', target: 'strategies' }, { label: 'Orders', icon: 'grid', target: 'orders' }, { label: 'Open positions', icon: 'trend', target: 'open-positions' }, { label: 'Trade history', icon: 'clock', target: 'trade-history' }] },
+    { group: 'Trading', items: [{ label: 'Market data', icon: 'chart', target: 'market-data' }, { label: 'Macro intelligence', icon: 'globe', target: 'macro-intelligence' }, { label: 'Model readiness', icon: 'gauge', target: 'model-readiness' }, { label: 'Forward evidence', icon: 'trend', target: 'forward-evidence' }, { label: 'Replay laboratory', icon: 'clock', target: 'replay-laboratory' }, { label: 'Trade proposals', icon: 'grid', target: 'trade-proposals' }, { label: 'Shadow trades', icon: 'trend', target: 'shadow-trades' }, { label: 'Strategies', icon: 'gauge', target: 'strategies' }, { label: 'Orders', icon: 'grid', target: 'orders' }, { label: 'Open positions', icon: 'trend', target: 'open-positions' }, { label: 'Trade history', icon: 'clock', target: 'trade-history' }] },
     { group: 'Operations', items: [{ label: 'Assurance', icon: 'grid', target: 'operational-assurance' }, { label: 'Risk management', icon: 'gauge', target: 'risk-management' }, { label: 'Reconciliation', icon: 'clock', target: 'reconciliation' }, { label: 'System status', icon: 'gauge', target: 'system-status' }] },
   ];
 
@@ -543,6 +546,24 @@ export class DashboardComponent {
     });
   }
 
+  protected decideProposal(proposalId: string, decision: 'APPROVE' | 'DECLINE'): void {
+    const action = decision === 'APPROVE' ? 'approve this proposal for deterministic risk review' : 'decline this proposal';
+    if (!window.confirm(`Do you want to ${action}? This action does not submit an IG order.`)) return;
+    this.proposalBusy.set(proposalId);
+    this.proposalMessage.set('');
+    this.dashboardApi.decideTradeProposal(proposalId, decision).pipe(
+      finalize(() => this.proposalBusy.set('')),
+    ).subscribe({
+      next: () => {
+        this.proposalMessage.set(decision === 'APPROVE'
+          ? 'Proposal approved for deterministic risk review. No broker order was submitted.'
+          : 'Proposal declined. No broker order was submitted.');
+        this.loadTradingOperations();
+      },
+      error: () => this.proposalMessage.set('The proposal decision was not recorded. It may have expired or already been reviewed.'),
+    });
+  }
+
   protected refreshMacroIntelligence(): void {
     if (this.macroBusy()) return;
     this.macroBusy.set(true);
@@ -585,6 +606,11 @@ export class DashboardComponent {
       currency: 'ZAR',
       minimumFractionDigits: 2,
     }).format(Number(value ?? 0));
+  }
+
+  protected confidencePercent(value: string): string {
+    const score = Number(value);
+    return Number.isFinite(score) ? `${(score * 100).toFixed(1)}%` : '—';
   }
 
   protected sourceMoney(value: string, currency: string): string {
@@ -804,6 +830,14 @@ export class DashboardComponent {
     this.dashboardApi.orderIntents().subscribe({
       next: (data) => this.orderIntents.set(data),
       error: () => this.orderIntents.set({ count: 0, orders: [] }),
+    });
+    this.dashboardApi.tradeProposals().subscribe({
+      next: (data) => this.tradeProposals.set(data),
+      error: () => this.tradeProposals.set({ status: 'OWNER_REVIEW', execution_authority: 'NONE', count: 0, proposals: [] }),
+    });
+    this.dashboardApi.tradeProposals().subscribe({
+      next: (data) => this.tradeProposals.set(data),
+      error: () => this.tradeProposals.set({ status: 'OWNER_REVIEW', execution_authority: 'NONE', count: 0, proposals: [] }),
     });
     this.dashboardApi.riskStatus().subscribe({
       next: (data) => this.riskStatus.set(data), error: () => this.riskStatus.set(null),

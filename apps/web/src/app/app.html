@@ -499,6 +499,35 @@
         </div>
       </section>
 
+      <section class="panel trade-history-panel" id="trade-proposals" [hidden]="dashboardTab() !== 'trading'">
+        <div class="panel-header">
+          <div><h2>Trade proposals</h2><p>Local research suggestions requiring owner review. Approval does not submit an IG order.</p></div>
+          <span class="record-count">{{ tradeProposals()?.count ?? 0 }} PROPOSALS</span>
+        </div>
+        @if (proposalMessage()) { <p class="proposal-message" role="status">{{ proposalMessage() }}</p> }
+        <div class="history-table" role="table" aria-label="Owner trade proposals">
+          <div class="proposal-row history-head" role="row"><span>Market</span><span>Proposal</span><span>Levels</span><span>Risk</span><span>Evidence</span><span>Status</span><span>Owner action</span></div>
+          @for (proposal of tradeProposals()?.proposals ?? []; track proposal.trade_proposal_id) {
+            <div class="proposal-row" role="row">
+              <span><strong>{{ proposal.market }}</strong><small>{{ proposal.created_at_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }} SAST</small></span>
+              <span><em class="side-badge" [class.sell]="proposal.direction === 'SELL'">{{ proposal.direction }}</em><small>{{ confidencePercent(proposal.confidence) }} · {{ proposal.horizon_minutes }}m</small></span>
+              <span><small>Entry {{ proposal.entry_price }}</small><small>Stop {{ proposal.stop_price }} · Target {{ proposal.target_price }}</small></span>
+              <span><strong>{{ money(proposal.risk_zar) }}</strong><small>Size {{ proposal.proposed_size }}</small></span>
+              <span><small>{{ proposal.rationale_summary }}</small><small>Cutoff {{ proposal.data_cutoff_utc | date:'dd MMM, HH:mm':'UTC' }} UTC</small></span>
+              <span><strong>{{ proposal.status }}</strong><small>Email {{ proposal.notification_status }}</small></span>
+              <span class="proposal-actions">
+                @if (proposal.status === 'PENDING_OWNER') {
+                  <button type="button" class="row-control" [disabled]="!!proposalBusy()" (click)="decideProposal(proposal.trade_proposal_id, 'APPROVE')">Approve</button>
+                  <button type="button" class="row-control decline" [disabled]="!!proposalBusy()" (click)="decideProposal(proposal.trade_proposal_id, 'DECLINE')">Decline</button>
+                } @else { <small>{{ proposal.decided_at_utc ? (proposal.decided_at_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : 'No action available' }}</small> }
+              </span>
+            </div>
+          } @empty {
+            <div class="history-empty"><strong>No proposals awaiting review</strong><span>A proposal appears only after eligible Aurex model evidence and local research provenance exist.</span></div>
+          }
+        </div>
+      </section>
+
       <section class="panel trade-history-panel" id="shadow-trades" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Hypothetical shadow trades</h2><p>Cost-aware simulated entries and exits. These records are never sent to IG.</p></div><span class="record-count">{{ shadowTrades()?.count ?? 0 }} SHADOW</span></div>
         <div class="history-table" role="table" aria-label="Hypothetical shadow trades">

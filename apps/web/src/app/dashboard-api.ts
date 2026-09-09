@@ -358,6 +358,19 @@ export interface OrderIntentsData {
   }>;
 }
 
+export interface TradeProposalsData {
+  status: 'OWNER_REVIEW';
+  execution_authority: string;
+  count: number;
+  proposals: Array<{
+    trade_proposal_id: string; market: string; direction: 'BUY' | 'SELL'; confidence: string;
+    proposed_size: string; entry_price: string; stop_price: string; target_price: string;
+    risk_zar: string; horizon_minutes: number; decision_time_utc: string; data_cutoff_utc: string;
+    expires_at_utc: string; status: string; rationale_summary: string; notification_status: string;
+    decided_at_utc: string | null; decision_reason: string | null; created_at_utc: string;
+  }>;
+}
+
 export interface RiskStatusData {
   status: string;
   reason: string | null;
@@ -1086,6 +1099,18 @@ export class DashboardApi {
 
   orderIntents(): Observable<OrderIntentsData> {
     return this.http.get<OrderIntentsData>('/api/v1/orders', { params: { limit: 50 } });
+  }
+
+  tradeProposals(): Observable<TradeProposalsData> {
+    return this.http.get<TradeProposalsData>('/api/v1/trade-proposals', { params: { limit: 50 } });
+  }
+
+  decideTradeProposal(proposalId: string, decision: 'APPROVE' | 'DECLINE', reason = ''): Observable<object> {
+    return this.http.post(`/api/v1/trade-proposals/${proposalId}/decision`, {
+      decision,
+      acknowledgement: `I ${decision} THIS TRADE PROPOSAL FOR AUREX RISK REVIEW`,
+      reason,
+    });
   }
 
   riskStatus(): Observable<RiskStatusData> {

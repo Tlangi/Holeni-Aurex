@@ -50,7 +50,11 @@ Transport = Callable[[str, Mapping[str, str], Mapping[str, Any], float], tuple[i
 
 def _requests_transport(url: str, headers: Mapping[str, str], payload: Mapping[str, Any],
                         timeout: float) -> tuple[int, Mapping[str, Any], Mapping[str, str]]:
-    response = requests.post(url, headers=dict(headers), json=dict(payload), timeout=timeout)
+    # Redirects are disabled so a permitted loopback/private endpoint cannot
+    # bounce a research payload to a public provider.
+    response = requests.post(
+        url, headers=dict(headers), json=dict(payload), timeout=timeout, allow_redirects=False
+    )
     try:
         body = response.json()
     except ValueError:
@@ -93,16 +97,14 @@ class OpenAICompatibleRuntime:
         self._guard_circuit()
         model = self.settings.llm_model_deep if deep else self.settings.llm_model_fast
         model = model or self.settings.llm_model_deep or self.settings.llm_model_fast
-        base_urls = {
-            "openai": "https://api.openai.com/v1",
-            "deepseek": "https://api.deepseek.com/v1",
-            "mistral": "https://api.mistral.ai/v1",
-        }
-        base_url = self.settings.llm_base_url or base_urls.get(self.settings.llm_provider.lower(), "")
+        # LOCAL_ONLY has no provider defaults and therefore no cloud fallback.
+        base_url = self.settings.llm_base_url
         if not base_url:
             raise ProviderUnavailable("LLM_BASE_URL_NOT_CONFIGURED")
         url = base_url.rstrip("/") + "/chat/completions"
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.settings.llm_api_key}"}
+        headers = {"Content-Type": "application/json"}
+        if self.settings.llm_api_key:
+            headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
         payload = {"model": model, "temperature": 0, "response_format": {"type": "json_object"},
                    "messages": [{"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_prompt}]}

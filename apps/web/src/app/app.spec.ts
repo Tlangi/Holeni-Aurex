@@ -57,6 +57,8 @@ class DashboardApiMock {
   shadowPerformance = vi.fn(() => of({ days: 30, zero_trade_days_included: true,
     execution_enabled: false, daily: [] }));
   orderIntents = vi.fn(() => of({ count: 0, orders: [] }));
+  tradeProposals = vi.fn(() => of({ status: 'OWNER_REVIEW', execution_authority: 'NONE', count: 0, proposals: [] }));
+  decideTradeProposal = vi.fn(() => of({ status: 'OWNER_APPROVED_FOR_RISK', broker_order_submitted: false }));
   riskStatus = vi.fn(() => of({ status: 'CURRENT', policy: null, ledger: null }));
   reconciliation = vi.fn(() => of({ status: 'CLEAR', unresolved: 0, issues: [] }));
   operationsStatus = vi.fn(() => of({

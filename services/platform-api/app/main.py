@@ -72,6 +72,7 @@ from app.market_intelligence import model_readiness
 from app.model_monitoring import read_model_monitoring
 from app.macro_intelligence import generate_market_decisions, read_macro_status, sync_official_macro_sources
 from app.intelligence import read_intelligence_status
+from app.trade_proposals import ProposalDecision, decide_trade_proposal, read_trade_proposals
 from app.historical_data_status import read_historical_data_status
 from app.trades import read_trade_history
 from app.readiness import read_trading_readiness
@@ -475,6 +476,28 @@ def historical_data_status(user: AuthenticatedUser = Depends(require_user)) -> J
 @app.get("/api/v1/shadow/trades", tags=["trading"])
 def shadow_trades(limit: int = 50, user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
     return JSONResponse(content=read_shadow_trades(settings, user.tenant_id, limit=limit))
+
+
+@app.get("/api/v1/trade-proposals", tags=["trading"])
+def trade_proposals(limit: int = 50, user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Owner-review queue. Reading a proposal cannot submit an order."""
+    return JSONResponse(content=jsonable_encoder(read_trade_proposals(settings, user.tenant_id, limit)))
+
+
+@app.post("/api/v1/trade-proposals/{proposal_id}/decision", tags=["trading"])
+def trade_proposal_decision(
+    proposal_id: str, payload: ProposalDecision,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    """Record owner intent for subsequent deterministic risk review; never submit here."""
+    try:
+        return JSONResponse(content=decide_trade_proposal(settings, user, proposal_id, payload))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)},
+                            status_code=status.HTTP_403_FORBIDDEN)
+    except ValueError as exc:
+        return JSONResponse(content={"status": "conflict", "message": str(exc)},
+                            status_code=status.HTTP_409_CONFLICT)
 
 
 @app.get("/api/v1/shadow/performance/daily", tags=["trading"])
