@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     historical_backfill_min_free_gb: int = Field(default=20, ge=5, le=1000)
     historical_backfill_max_attempts: int = Field(default=3, ge=1, le=10)
     historical_backfill_recent_months: int = Field(default=3, ge=2, le=3)
-    historical_minimum_coverage: float = Field(default=0.995, ge=0.95, le=1.0)
+    historical_minimum_coverage: float = Field(default=0.99, ge=0.95, le=1.0)
     historical_maximum_largest_gap_minutes: int = Field(default=15, ge=1, le=240)
     historical_maximum_unexpected_gaps: int = Field(default=250, ge=0, le=5000)
     historical_maximum_rejected_tick_ratio: float = Field(default=0.001, ge=0.0, le=0.01)

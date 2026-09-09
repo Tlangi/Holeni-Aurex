@@ -105,8 +105,30 @@ def reconcile_recent_campaign(settings: Settings, *, now_utc: datetime | None = 
         superseded += int(cursor.rowcount or 0)
         connection.commit()
     queued = enqueue_phase(settings, start_utc=start, end_utc=end, vendor=vendor)
+    # Campaign priorities are policy, not immutable evidence. Older unfinished
+    # rows may carry priorities from a previous campaign and must be rebased so
+    # USD/JPY remains the governed first market after a rolling-window update.
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT j.backfill_job_id,j.partition_start_utc,m.symbol
+               FROM app.historical_backfill_jobs j
+               JOIN app.markets m ON m.market_id=j.market_id
+               WHERE j.vendor=%s AND j.status IN ('NOT_STARTED','RETRY_PENDING')
+                 AND j.partition_end_utc>%s AND j.partition_start_utc<%s""",
+            (vendor, start, end),
+        )
+        unfinished = cursor.fetchall()
+        for job in unfinished:
+            cursor.execute(
+                "UPDATE app.historical_backfill_jobs SET priority=%s,updated_at_utc=SYSUTCDATETIME() WHERE backfill_job_id=%s",
+                (partition_priority(str(job["symbol"]), job["partition_start_utc"], end),
+                 str(job["backfill_job_id"])),
+            )
+        connection.commit()
     return {**queued, "window_start_utc": start.isoformat(), "window_end_utc": end.isoformat(),
             "target_months": settings.historical_backfill_recent_months,
+            "priorities_rebased": len(unfinished),
             "superseded_unfinished": superseded}
 
 
