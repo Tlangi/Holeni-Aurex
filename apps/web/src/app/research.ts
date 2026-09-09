@@ -82,6 +82,10 @@ export class ResearchComponent {
     return this.data()?.cost_models.find((item) => item.symbol === symbol);
   }
 
+  protected crossSupport(symbol: string) {
+    return this.data()?.historical_data.cross_support.find((item) => item.symbol === symbol);
+  }
+
   protected syncEvidence(): void {
     this.busy.set('sync'); this.message.set('');
     this.api.syncResearchEvidence().pipe(finalize(() => this.busy.set(''))).subscribe({

@@ -10,8 +10,31 @@ from app.config import Settings
 from app.database import open_database
 
 
+MARKET_PRIORITY = {
+    "USDJPY": 0, "EURUSD": 1, "GBPUSD": 2, "EURJPY": 3, "GBPJPY": 4,
+    "XAUUSD": 5, "AUDJPY": 6, "USDZAR": 7, "GERMANY40": 8,
+}
+
+
 def _next_month(value: datetime) -> datetime:
     return value.replace(year=value.year + (value.month == 12), month=1 if value.month == 12 else value.month + 1)
+
+
+def recent_month_boundaries(now_utc: datetime, months: int = 3) -> tuple[datetime, datetime]:
+    """Return current month plus the preceding one or two calendar months."""
+    if months not in (2, 3):
+        raise ValueError("Historical M1 backfill must cover two or three recent months")
+    end = now_utc.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    start = end.replace(day=1, hour=0, minute=0)
+    for _ in range(months - 1):
+        start = (start - timedelta(days=1)).replace(day=1)
+    return start, end
+
+
+def partition_priority(symbol: str, partition_start: datetime, campaign_end: datetime) -> int:
+    """Markets follow governance priority while months run newest first."""
+    age = (campaign_end.year - partition_start.year) * 12 + campaign_end.month - partition_start.month
+    return MARKET_PRIORITY.get(symbol, 99) * 1_000 + max(0, age)
 
 
 def enqueue_phase(settings: Settings, *, start_utc: datetime, end_utc: datetime,
@@ -25,24 +48,66 @@ def enqueue_phase(settings: Settings, *, start_utc: datetime, end_utc: datetime,
         cursor.execute("""SELECT m.market_id,m.symbol,x.vendor_symbol FROM app.markets m
           JOIN app.instrument_source_mappings x ON x.market_id=m.market_id AND x.vendor=%s
           WHERE m.enabled=1 AND m.research_enabled=1
-          ORDER BY CASE WHEN m.symbol='USDJPY' THEN 0 ELSE 1 END,m.symbol""",(vendor,))
+          ORDER BY m.symbol""",(vendor,))
         markets=cursor.fetchall()
-        for market_index,market in enumerate(markets):
+        for market in markets:
             point=start
             while point<end:
                 boundary=min(_next_month(point),end)
                 cursor.execute("""IF NOT EXISTS(SELECT 1 FROM app.historical_backfill_jobs WHERE market_id=%s
-                  AND vendor=%s AND source_format='TICK_CSV' AND partition_start_utc=%s AND partition_end_utc=%s)
+                  AND vendor=%s AND source_format='TICK_CSV' AND partition_start_utc=%s
+                  AND status<>'SUPERSEDED')
                   BEGIN INSERT app.historical_backfill_jobs(backfill_job_id,market_id,vendor,vendor_symbol,
                     partition_start_utc,partition_end_utc,source_format,priority,status)
                   VALUES(%s,%s,%s,%s,%s,%s,'TICK_CSV',%s,'NOT_STARTED'); SELECT 1 created END ELSE SELECT 0 created""",
-                  (str(market["market_id"]),vendor,point,boundary,str(uuid4()),str(market["market_id"]),vendor,
-                   str(market["vendor_symbol"]),point,boundary,market_index*100_000_000+int(point.timestamp())))
+                  (str(market["market_id"]),vendor,point,str(uuid4()),str(market["market_id"]),vendor,
+                   str(market["vendor_symbol"]),point,boundary,
+                   partition_priority(str(market["symbol"]), point, end)))
                 created += int(cursor.fetchone()["created"])
                 point=boundary
         connection.commit()
     return {"status":"QUEUED","vendor":vendor,"markets":len(markets),"partitions_created":created,
             "priority_market":"USDJPY","execution_enabled":False}
+
+
+def reconcile_recent_campaign(settings: Settings, *, now_utc: datetime | None = None,
+                              vendor: str = "DUKASCOPY") -> dict[str, object]:
+    """Retire only unfinished obsolete work and enqueue the current bounded campaign.
+
+    Completed jobs and their immutable evidence are deliberately retained.
+    """
+    start, end = recent_month_boundaries(now_utc or datetime.now(timezone.utc),
+                                         settings.historical_backfill_recent_months)
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """UPDATE app.historical_backfill_jobs
+               SET status='SUPERSEDED',last_error_code='OUTSIDE_ACTIVE_WINDOW',
+                   last_error_detail='Retained but excluded by rolling recent-M1 policy',
+                   updated_at_utc=SYSUTCDATETIME()
+               WHERE vendor=%s AND status IN ('NOT_STARTED','RETRY_PENDING')
+                 AND (partition_end_utc<=%s OR partition_start_utc>=%s)""",
+            (vendor, start, end),
+        )
+        superseded = int(cursor.rowcount or 0)
+        cursor.execute(
+            """;WITH duplicates AS (
+                 SELECT backfill_job_id,status,ROW_NUMBER() OVER(
+                   PARTITION BY market_id,vendor,source_format,partition_start_utc
+                   ORDER BY partition_end_utc DESC,created_at_utc DESC) duplicate_rank
+                 FROM app.historical_backfill_jobs
+                 WHERE vendor=%s AND status IN ('NOT_STARTED','RETRY_PENDING')
+                   AND partition_end_utc>%s AND partition_start_utc<%s)
+               UPDATE duplicates SET status='SUPERSEDED'
+               WHERE duplicate_rank>1""",
+            (vendor, start, end),
+        )
+        superseded += int(cursor.rowcount or 0)
+        connection.commit()
+    queued = enqueue_phase(settings, start_utc=start, end_utc=end, vendor=vendor)
+    return {**queued, "window_start_utc": start.isoformat(), "window_end_utc": end.isoformat(),
+            "target_months": settings.historical_backfill_recent_months,
+            "superseded_unfinished": superseded}
 
 
 def claim_next(settings: Settings) -> dict[str, object] | None:
@@ -51,7 +116,7 @@ def claim_next(settings: Settings) -> dict[str, object] | None:
         cursor=connection.cursor(as_dict=True)
         cursor.execute(""";WITH candidate AS (SELECT TOP(1) * FROM app.historical_backfill_jobs
           WITH(UPDLOCK,READPAST,ROWLOCK) WHERE status IN ('NOT_STARTED','RETRY_PENDING')
-          AND (next_attempt_at_utc IS NULL OR next_attempt_at_utc<=SYSUTCDATETIME()) ORDER BY priority,partition_start_utc)
+          AND (next_attempt_at_utc IS NULL OR next_attempt_at_utc<=SYSUTCDATETIME()) ORDER BY priority,partition_start_utc DESC)
           UPDATE candidate SET status='DOWNLOADING',attempt_count=attempt_count+1,claimed_at_utc=SYSUTCDATETIME(),
             heartbeat_at_utc=SYSUTCDATETIME(),updated_at_utc=SYSUTCDATETIME()
           OUTPUT inserted.backfill_job_id,inserted.market_id,inserted.vendor,inserted.vendor_symbol,
@@ -109,13 +174,18 @@ def update_job(settings: Settings, job_id: str, status: str, *, error_code: str 
 
 
 def queue_summary(settings: Settings) -> dict[str, int | bool]:
+    start,end=recent_month_boundaries(datetime.now(timezone.utc),settings.historical_backfill_recent_months)
     with open_database(settings) as connection:
         cursor=connection.cursor(as_dict=True)
-        cursor.execute("SELECT status,COUNT(*) item_count FROM app.historical_backfill_jobs GROUP BY status")
+        cursor.execute("""SELECT status,COUNT(*) item_count FROM app.historical_backfill_jobs
+          WHERE partition_end_utc>%s AND partition_start_utc<%s AND status<>'SUPERSEDED'
+          GROUP BY status""",(start,end))
         counts={str(row["status"]):int(row["item_count"]) for row in cursor.fetchall()}
+        cursor.execute("SELECT COUNT(*) item_count FROM app.historical_backfill_jobs WHERE status='SUPERSEDED'")
+        superseded=int(cursor.fetchone()["item_count"])
     total=sum(counts.values()); complete=counts.get("COMPLETE",0); failed=counts.get("FAILED",0)
     return {"total":total,"complete":complete,"failed":failed,
-            "done":bool(total and complete+failed==total)}
+            "superseded":superseded,"done":bool(total and complete+failed==total)}
 
 
 def claim_progress_notification(settings: Settings) -> dict[str, object] | None:

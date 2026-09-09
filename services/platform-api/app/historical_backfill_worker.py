@@ -10,9 +10,10 @@ from app.dukascopy_tick_import import import_dukascopy_ticks
 from app.email_delivery import send_email
 from app.historical_backfill import (claim_completion_notification, claim_next, download_partition,
                                      claim_progress_notification, record_completion_notification, recover_stale_claims,
-                                     resource_gate, update_job)
+                                     reconcile_recent_campaign, resource_gate, update_job)
 from app.historical_validation import validate_partition
 from app.m1_m5_reconciliation import reconcile_batch_to_accepted_m5
+from app.timeframe_fallback import persist_batch_cross_timeframe_recovery
 
 logger=logging.getLogger("aurex.historical_backfill")
 
@@ -27,6 +28,10 @@ class HistoricalBackfillWorker:
         recovered=recover_stale_claims(self.settings)
         if recovered:
             logger.warning("recovered stale historical jobs",extra={"operation":"backfill.recovery","result":recovered})
+        if self.settings.historical_backfill_enabled:
+            campaign = reconcile_recent_campaign(self.settings)
+            logger.info("recent historical campaign reconciled", extra={
+                "operation": "backfill.policy", "result": str(campaign)})
         while not self.stopped.is_set():
             if not self.settings.historical_backfill_enabled:
                 self.stopped.wait(self.settings.historical_backfill_poll_seconds); continue
@@ -50,9 +55,13 @@ class HistoricalBackfillWorker:
                 )
                 if validation["status"] != "VALIDATED":
                     raise RuntimeError("PARTITION_VALIDATION_FAILED")
+                recovery = persist_batch_cross_timeframe_recovery(
+                    self.settings, str(result["import_batch_id"]),
+                )
                 update_job(self.settings,job_id,"COMPLETE",import_batch_id=str(result["import_batch_id"]))
                 logger.info("partition imported as unverified evidence",extra={
-                    "operation":"backfill.partition","result":f"COMPLETE:{reconciliation['primary']['m5_source']}"})
+                    "operation":"backfill.partition",
+                    "result":f"COMPLETE:{reconciliation['primary']['m5_source']}:{recovery}"})
             except Exception as exc:
                 retry=int(job["attempt_count"])<self.settings.historical_backfill_max_attempts
                 update_job(self.settings,job_id,"RETRY_PENDING" if retry else "FAILED",

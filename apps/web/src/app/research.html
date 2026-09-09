@@ -97,22 +97,32 @@
         <div><span>Quota deferred</span><strong>{{ research.data_operations.recovery_summary['QUOTA_DEFERRED'] ?? 0 }}</strong></div>
       </div>
       <div class="panel-heading"><div><p>HISTORICAL MARKET DATA</p><h2>Independent M1 and M5 evidence</h2></div>
-        <span>Germany 40 proxy qualification: blocked</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Dataset</th><th>Rows</th><th>From</th><th>To</th><th>Bid/ask</th><th>Research eligible</th></tr></thead>
+        <span>M1 and M5 remain separate; M5 never fabricates M1</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Market</th><th>Dataset</th><th>Rows</th><th>From</th><th>To</th><th>Bid/ask</th><th>Research eligible</th><th>Cross-timeframe support</th></tr></thead>
         <tbody>@for (item of research.historical_data.datasets; track item.symbol + item.timeframe) {
           <tr><td>{{ item.symbol }}</td><td>{{ item.timeframe }}</td><td>{{ item.row_count | number }}</td>
             <td>{{ item.earliest_sast ? (item.earliest_sast | date:'mediumDate':'Africa/Johannesburg') : '—' }}</td>
             <td>{{ item.latest_sast ? (item.latest_sast | date:'short':'Africa/Johannesburg') : '—' }}</td>
-            <td>{{ item.bid_ask_rows | number }}</td><td>{{ item.research_eligible_rows | number }}</td></tr>
+            <td>{{ item.bid_ask_rows | number }}</td><td>{{ item.research_eligible_rows | number }}</td>
+            <td>@if (item.timeframe === 'M1') { {{ crossSupport(item.symbol)?.m1_m5_fallbacks ?? 0 }} M5 fallback }
+              @else { {{ crossSupport(item.symbol)?.m5_derived_from_m1 ?? 0 }} derived from M1 }</td></tr>
         }</tbody></table></div>
-      <div class="panel-heading"><div><p>BACKFILL QUEUE</p><h2>Resumable monthly partitions</h2></div>
+      <div class="panel-heading"><div><p>BACKFILL QUEUE</p><h2>Recent {{ research.historical_data.backfill_policy.target_months }}-month M1 campaign</h2></div>
         <span>{{ research.historical_data.queue_summary.state }} · {{ research.historical_data.queue_summary.complete }} / {{ research.historical_data.queue_summary.total }} complete</span></div>
       <div class="protocol-summary">
         <div><span>Completed</span><strong>{{ research.historical_data.queue_summary.complete }}</strong></div>
         <div><span>Active</span><strong>{{ research.historical_data.queue_summary.active }}</strong></div>
         <div><span>Pending</span><strong>{{ research.historical_data.queue_summary.pending }}</strong></div>
         <div><span>Failed</span><strong>{{ research.historical_data.queue_summary.failed }}</strong></div>
+        <div><span>Older work retained</span><strong>{{ research.historical_data.queue_summary.superseded }}</strong></div>
       </div>
+      <div class="panel-heading"><div><p>GERMANY 40 LINEAGES</p><h2>IG authority kept separate from external proxies</h2></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Timeframe</th><th>Source</th><th>Authority</th><th>Rows</th><th>Eligible</th><th>Range</th></tr></thead>
+        <tbody>@for (lineage of research.historical_data.germany40_lineages; track lineage.timeframe + lineage.source) {
+          <tr><td>{{ lineage.timeframe }}</td><td>{{ lineage.source }}</td><td>{{ lineage.authority }}</td>
+            <td>{{ lineage.row_count | number }}</td><td>{{ lineage.eligible_rows | number }}</td>
+            <td>{{ lineage.earliest_utc | date:'mediumDate':'UTC' }} – {{ lineage.latest_utc | date:'mediumDate':'UTC' }} UTC</td></tr>
+        }</tbody></table></div>
       <div class="table-wrap"><table><thead><tr><th>Market</th><th>Vendor</th><th>Partition</th><th>Format</th><th>Status</th><th>Attempts</th></tr></thead>
         <tbody>@for (job of research.historical_data.jobs; track job.backfill_job_id) {
           <tr><td>{{ job.symbol }}</td><td>{{ job.vendor }} · {{ job.vendor_symbol }}</td>

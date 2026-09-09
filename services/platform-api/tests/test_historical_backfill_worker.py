@@ -8,6 +8,7 @@ from app.historical_backfill_worker import HistoricalBackfillWorker
 def test_worker_is_single_concurrency_and_disabled_by_default(monkeypatch, tmp_path: Path) -> None:
     stopped=Event(); stopped.set()
     monkeypatch.setattr("app.historical_backfill_worker.recover_stale_claims",lambda *_: 0)
+    monkeypatch.setattr("app.historical_backfill_worker.reconcile_recent_campaign",lambda *_: {})
     monkeypatch.setattr("app.historical_backfill_worker.claim_next",lambda *_: (_ for _ in ()).throw(AssertionError()))
     HistoricalBackfillWorker(Settings(),stopped,tmp_path).run()
 
@@ -20,6 +21,7 @@ def test_worker_has_no_broker_execution_capability(tmp_path: Path) -> None:
 def test_worker_recovers_abandoned_claims_on_start(monkeypatch, tmp_path: Path) -> None:
     stopped=Event(); stopped.set(); calls=[]
     monkeypatch.setattr("app.historical_backfill_worker.recover_stale_claims",lambda settings: calls.append(settings) or 1)
+    monkeypatch.setattr("app.historical_backfill_worker.reconcile_recent_campaign",lambda *_: {})
     HistoricalBackfillWorker(Settings(),stopped,tmp_path).run()
     assert len(calls)==1
 
@@ -31,6 +33,7 @@ def test_completion_notification_is_checked_after_terminal_failure(monkeypatch, 
          "market_id":"market","vendor_symbol":"usdjpy","partition_start_utc":None,
          "partition_end_utc":None}
     monkeypatch.setattr("app.historical_backfill_worker.recover_stale_claims",lambda *_: 0)
+    monkeypatch.setattr("app.historical_backfill_worker.reconcile_recent_campaign",lambda *_: {})
     monkeypatch.setattr("app.historical_backfill_worker.resource_gate",lambda *_: (True,"PASS"))
     monkeypatch.setattr("app.historical_backfill_worker.claim_next",lambda *_: job if not updates else stopped.set())
     monkeypatch.setattr("app.historical_backfill_worker.download_partition",lambda *_: (_ for _ in ()).throw(RuntimeError("final failure")))

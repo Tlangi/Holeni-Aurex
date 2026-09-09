@@ -218,18 +218,9 @@ def health_live() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 def health_ready() -> JSONResponse:
-    database_ready, database_status = check_database(settings)
+    database_ready, _database_status = check_database(settings)
     payload = {
         "status": "ready" if database_ready else "not_ready",
-        "checks": {
-            "database": database_status,
-            "smtp": "configured" if settings.smtp_configured else "not_configured",
-            "ig_demo": "configured" if settings.ig_configured else "not_configured",
-        },
-        "safety": {
-            "trading_mode": settings.trading_mode,
-            "broker_environment": settings.broker_environment,
-        },
     }
     return JSONResponse(
         content=payload,

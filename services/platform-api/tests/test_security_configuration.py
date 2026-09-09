@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.main import health_ready
 
 
 def test_localhost_development_remains_supported() -> None:
@@ -34,3 +35,9 @@ def test_production_rejects_trusted_certificate_for_remote_sql() -> None:
         Settings(_env_file=None, app_env="production", auth_hash_pepper="x" * 32,
             session_cookie_secure=True, sql_host="10.0.0.5", sql_server="10.0.0.5",
             sql_trust_server_certificate=True, web_origins="https://holeniaurex.co.za")
+
+
+def test_public_readiness_response_does_not_disclose_internal_components(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.check_database", lambda _settings: (True, "connected:secret-host"))
+    response = health_ready()
+    assert response.body == b'{"status":"ready"}'

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.config import Settings
 from app.database import open_database
+from app.historical_backfill import recent_month_boundaries
 
 SAST=ZoneInfo("Africa/Johannesburg")
 
@@ -76,8 +77,15 @@ def read_historical_data_status(settings: Settings, tenant_id: str) -> dict[str,
                  "partition_end_sast":_sast(row["partition_end_utc"]),
                  "updated_at_utc":_iso(row["updated_at_utc"]),
                  "updated_at_sast":_sast(row["updated_at_utc"])} for row in cursor.fetchall()]
-        cursor.execute("""SELECT status,COUNT(*) item_count FROM app.historical_backfill_jobs GROUP BY status""")
+        policy_start,policy_end=recent_month_boundaries(datetime.now(timezone.utc),
+                                                        settings.historical_backfill_recent_months)
+        cursor.execute("""SELECT status,COUNT(*) item_count FROM app.historical_backfill_jobs
+          WHERE partition_end_utc>%s AND partition_start_utc<%s AND status<>'SUPERSEDED'
+          GROUP BY status""",
+                       (policy_start,policy_end))
         counts={str(row["status"]):int(row["item_count"]) for row in cursor.fetchall()}
+        cursor.execute("SELECT COUNT(*) item_count FROM app.historical_backfill_jobs WHERE status='SUPERSEDED'")
+        superseded=int(cursor.fetchone()["item_count"])
         total=sum(counts.values()); complete=counts.get("COMPLETE",0); failed=counts.get("FAILED",0)
         active=sum(counts.get(state,0) for state in ("DOWNLOADING","DOWNLOADED","VALIDATING","IMPORTED"))
         pending=counts.get("NOT_STARTED",0)+counts.get("RETRY_PENDING",0)
@@ -89,9 +97,46 @@ def read_historical_data_status(settings: Settings, tenant_id: str) -> dict[str,
             campaign_state="QUEUED"
         else:
             campaign_state="EMPTY"
+        cursor.execute("""SELECT m.symbol,
+            COALESCE(SUM(CASE WHEN f.quality_state='M1_MISSING_M5_FALLBACK_AVAILABLE' THEN 1 ELSE 0 END),0) m1_m5_fallbacks,
+            COALESCE((SELECT COUNT(*) FROM app.market_candles_m5 d WHERE d.market_id=m.market_id
+              AND d.source='DERIVED_FROM_M1'),0) m5_derived_from_m1,
+            COALESCE((SELECT SUM(CASE WHEN r.status IN ('MATCH_STRONG','MATCH_ACCEPTABLE','PASS') THEN 1 ELSE 0 END)
+              FROM app.m1_m5_reconciliation r WHERE r.market_id=m.market_id),0) reconciliation_matches,
+            COALESCE((SELECT SUM(CASE WHEN r.status IN ('MISMATCH_REVIEW','FAIL') THEN 1 ELSE 0 END)
+              FROM app.m1_m5_reconciliation r WHERE r.market_id=m.market_id),0) reconciliation_mismatches
+            FROM app.markets m LEFT JOIN app.market_timeframe_fallbacks f ON f.market_id=m.market_id
+            WHERE m.enabled=1 AND m.research_enabled=1 GROUP BY m.market_id,m.symbol ORDER BY m.symbol""")
+        cross_support=[{**row,"m1_m5_fallbacks":int(row["m1_m5_fallbacks"] or 0),
+                        "m5_derived_from_m1":int(row["m5_derived_from_m1"] or 0),
+                        "reconciliation_matches":int(row["reconciliation_matches"] or 0),
+                        "reconciliation_mismatches":int(row["reconciliation_mismatches"] or 0)}
+                       for row in cursor.fetchall()]
+        cursor.execute("""SELECT m.symbol,c.source,'M1' timeframe,COUNT(*) row_count,
+            MIN(c.timestamp_utc) earliest_utc,MAX(c.timestamp_utc) latest_utc,
+            SUM(CASE WHEN c.research_eligible=1 THEN 1 ELSE 0 END) eligible_rows,
+            MIN(c.instrument_equivalence) equivalence
+            FROM app.markets m JOIN app.market_candles_m1 c ON c.market_id=m.market_id
+            WHERE m.symbol='GERMANY40' GROUP BY m.symbol,c.source
+            UNION ALL
+            SELECT m.symbol,c.source,'M5',COUNT(*),MIN(c.timestamp_utc),MAX(c.timestamp_utc),
+            SUM(CASE WHEN c.research_eligible=1 THEN 1 ELSE 0 END),MIN(c.instrument_equivalence)
+            FROM app.markets m JOIN app.market_candles_m5 c ON c.market_id=m.market_id
+            WHERE m.symbol='GERMANY40' GROUP BY m.symbol,c.source ORDER BY timeframe,source""")
+        germany40_lineages=[{**row,"row_count":int(row["row_count"]),
+                              "eligible_rows":int(row["eligible_rows"] or 0),
+                              "earliest_utc":_iso(row["earliest_utc"]),
+                              "latest_utc":_iso(row["latest_utc"]),
+                              "authority":"IG_AUTHORITATIVE" if str(row["source"]).startswith("IG_")
+                              else "INDEX_REFERENCE" if str(row["source"]).startswith(("DUKASCOPY","HISTDATA"))
+                              else "DERIVED_INTERNAL"} for row in cursor.fetchall()]
     return {"status":"HISTORICAL_DATA_FOUNDATION","queue_summary":{"state":campaign_state,
             "total":total,"complete":complete,"failed":failed,"active":active,"pending":pending,
-            "done":bool(total and complete+failed==total)},"datasets":datasets,"mappings":mappings,
+            "superseded":superseded,"done":bool(total and complete+failed==total)},
+            "backfill_policy":{"name":"RECENT_M1","target_months":settings.historical_backfill_recent_months,
+             "window_start_utc":policy_start.isoformat(),"window_end_utc":policy_end.isoformat(),
+             "newest_first":True},"datasets":datasets,"mappings":mappings,
             "batches":batches,"jobs":jobs,"source_priority":["DUKASCOPY_TICK_BID_ASK","DUKASCOPY_BAR",
             "HISTDATA_TICK_BID_ASK","HISTDATA_M1_BID","OTHER_VERIFIED"],
-            "alpha_vantage_primary":False,"germany40_proxy_only":True,"execution_enabled":False}
+            "cross_support":cross_support,"germany40_lineages":germany40_lineages,
+            "alpha_vantage_primary":False,"germany40_proxy_only":False,"execution_enabled":False}

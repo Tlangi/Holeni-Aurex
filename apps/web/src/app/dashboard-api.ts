@@ -640,8 +640,11 @@ export interface ResearchStatusData {
   historical_data: {
     status: string;
     queue_summary: { state: 'EMPTY' | 'QUEUED' | 'RUNNING' | 'COMPLETE' | 'COMPLETED_WITH_FAILURES';
-      total: number; complete: number; failed: number; active: number; pending: number; done: boolean };
-    germany40_proxy_only: true;
+      total: number; complete: number; failed: number; active: number; pending: number;
+      superseded: number; done: boolean };
+    backfill_policy: { name: string; target_months: number; window_start_utc: string;
+      window_end_utc: string; newest_first: boolean };
+    germany40_proxy_only: false;
     alpha_vantage_primary: false;
     datasets: Array<{ symbol: string; timeframe: 'M1' | 'M5'; row_count: number;
       earliest_utc: string | null; latest_utc: string | null; bid_ask_rows: number;
@@ -656,6 +659,11 @@ export interface ResearchStatusData {
       partition_start_utc: string; partition_end_utc: string; source_format: string;
       partition_start_sast: string; partition_end_sast: string;
       status: string; attempt_count: number; last_error_code: string | null }>;
+    cross_support: Array<{ symbol: string; m1_m5_fallbacks: number; m5_derived_from_m1: number;
+      reconciliation_matches: number; reconciliation_mismatches: number }>;
+    germany40_lineages: Array<{ symbol: string; source: string; timeframe: 'M1' | 'M5';
+      row_count: number; eligible_rows: number; earliest_utc: string; latest_utc: string;
+      equivalence: string; authority: 'IG_AUTHORITATIVE' | 'INDEX_REFERENCE' | 'DERIVED_INTERNAL' }>;
   };
   execution_enabled: false;
   required_feature_rows: number;
