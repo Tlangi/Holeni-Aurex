@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "services" / "platform-api"))
@@ -18,6 +20,7 @@ from app.tradingagents_adapter import (  # noqa: E402
     TradingAgentsResearchDecision,
     reject_secrets,
 )
+from app.intelligence import Direction, EvidenceQuality  # noqa: E402
 
 
 SYSTEM_PROMPT = """You are an internal Aurex Forex/CFD research team operating locally.
@@ -25,6 +28,23 @@ Use only the supplied point-in-time JSON evidence. Do not call tools, browse, re
 or produce orders, sizes, model promotions, or execution instructions. Aurex statistical models,
 qualification, deterministic risk, reconciliation, and execution remain authoritative. Return only
 a concise JSON research conclusion matching the requested schema. Do not reveal chain-of-thought."""
+
+
+class ModelResearchConclusion(BaseModel):
+    """Only judgement fields come from the model; provenance is code-owned."""
+
+    # Provider JSON mode may include harmless explanatory keys. They are
+    # discarded here; the persisted outer contract remains extra-forbid.
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+    direction: Direction
+    confidence: float = Field(ge=0, le=1)
+    reasoning_summary: str = Field(min_length=1, max_length=2000)
+    supporting_factors: list[str] = Field(default_factory=list, max_length=20)
+    opposing_factors: list[str] = Field(default_factory=list, max_length=20)
+    risk_flags: list[str] = Field(default_factory=list, max_length=20)
+    feature_suggestions: list[str] = Field(default_factory=list, max_length=20)
+    model_critique: list[str] = Field(default_factory=list, max_length=20)
+    regime: str = Field(default="UNKNOWN", max_length=40)
 
 
 def _safe_environment() -> None:
@@ -59,6 +79,11 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         max_tokens=settings.tradingagents_max_output_tokens,
     )
     llm = client.get_llm()
+    # The research contract is JSON-only.  Local models often wrap otherwise
+    # valid JSON in prose or Markdown unless the OpenAI-compatible server is
+    # explicitly placed in JSON mode.  Binding this at the transport layer
+    # keeps malformed output fail-closed instead of trying to salvage text.
+    llm = llm.bind(response_format={"type": "json_object"})
     prompt = {
         "task": "Forex-adapted bull/bear debate, regime assessment, model critique and risk challenge",
         "asset_guidance": {
@@ -66,7 +91,7 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
             "METAL": "Use XAU/USD, USD, yields, risk, technical, volatility and costs.",
             "INDEX_CFD": "Use broker-specific index evidence, macro, technical, volatility and costs; keep proxies classified.",
         }[context.asset_class.value],
-        "output_contract": TradingAgentsResearchDecision.model_json_schema(),
+        "output_contract": ModelResearchConclusion.model_json_schema(),
         "context": payload,
         "required_metadata": {
             "run_id": str(context.run_id),
@@ -88,19 +113,25 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
     content = message.content
     if isinstance(content, list):
         content = "".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in content)
-    result = TradingAgentsResearchDecision.model_validate_json(content)
+    conclusion = ModelResearchConclusion.model_validate_json(content)
     expected = prompt["required_metadata"]
-    actual = {
-        "run_id": str(result.run_id), "market": result.market,
-        "data_cutoff_utc": result.data_cutoff_utc.isoformat(),
-        "horizon_minutes": result.horizon_minutes, "local_model": result.local_model,
-        "tradingagents_version": result.tradingagents_version,
-        "tradingagents_commit": result.tradingagents_commit,
-        "prompt_version": result.prompt_version,
-        "input_snapshot_hash": result.input_snapshot_hash,
-    }
-    if actual != expected:
-        raise ValueError("TRADINGAGENTS_PROVENANCE_MISMATCH")
+    # Identity, cutoff and lineage are copied from validated Aurex context,
+    # never trusted to a probabilistic model to repeat correctly.
+    result = TradingAgentsResearchDecision(
+        **expected,
+        role="RESEARCH_MANAGER",
+        direction=conclusion.direction,
+        confidence=conclusion.confidence,
+        reasoning_summary=conclusion.reasoning_summary,
+        supporting_factors=conclusion.supporting_factors,
+        opposing_factors=conclusion.opposing_factors,
+        risk_flags=conclusion.risk_flags,
+        feature_suggestions=conclusion.feature_suggestions,
+        model_critique=conclusion.model_critique,
+        regime=conclusion.regime,
+        evidence_quality=EvidenceQuality.POINT_IN_TIME_VERIFIED,
+        audit_status="PASS",
+    )
     reject_secrets(result.model_dump(mode="json"))
     return result.model_dump(mode="json")
 
@@ -120,7 +151,12 @@ def main() -> int:
             "POINT_IN_TIME_VIOLATION", "SECRET_MATERIAL_REJECTED",
             "TRADINGAGENTS_PROVENANCE_MISMATCH", "TRADINGAGENTS_SNAPSHOT_MISMATCH",
         )
-        safe_code = next((value for value in known if value in code), "TRADINGAGENTS_FAILED")
+        if isinstance(exc, ValidationError):
+            safe_code = "SCHEMA_VALIDATION_FAILED"
+        elif isinstance(exc, json.JSONDecodeError):
+            safe_code = "MALFORMED_PROVIDER_RESPONSE"
+        else:
+            safe_code = next((value for value in known if value in code), "TRADINGAGENTS_FAILED")
         print(json.dumps({"status": "FAILED", "error_code": safe_code, "execution_authority": "NONE"}))
         return 1
 

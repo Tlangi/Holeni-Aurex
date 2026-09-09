@@ -369,15 +369,6 @@ class Settings(BaseSettings):
         )
 
     @property
-    def tradingagents_configured(self) -> bool:
-        return bool(
-            self.tradingagents_enabled
-            and self.tradingagents_provider in {"ollama", "openai_compatible"}
-            and self.tradingagents_base_url
-            and (self.tradingagents_quick_model or self.tradingagents_deep_model)
-        )
-
-    @property
     def demo_execution_configured(self) -> bool:
         """The immutable, fail-closed configuration gate for broker execution."""
         return (
