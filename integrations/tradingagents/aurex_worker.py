@@ -44,6 +44,7 @@ class ModelResearchConclusion(BaseModel):
     risk_flags: list[str] = Field(default_factory=list, max_length=20)
     feature_suggestions: list[str] = Field(default_factory=list, max_length=20)
     model_critique: list[str] = Field(default_factory=list, max_length=20)
+    evidence_references: list[str] = Field(min_length=1, max_length=20)
     regime: str = Field(default="UNKNOWN", max_length=40)
 
 
@@ -86,6 +87,12 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
     llm = llm.bind(response_format={"type": "json_object"})
     prompt = {
         "task": "Forex-adapted bull/bear debate, regime assessment, model critique and risk challenge",
+        "grounding_rules": [
+            "Every factual claim must be supported by a supplied context item.",
+            "Return its provenance_id in evidence_references.",
+            "Do not claim that an empty evidence category was assessed.",
+            "If evidence is insufficient, return NEUTRAL or REJECT and identify the gap.",
+        ],
         "asset_guidance": {
             "FX": "Use rates, macro, session, carry, technical, volatility and costs; no equity fundamentals.",
             "METAL": "Use XAU/USD, USD, yields, risk, technical, volatility and costs.",
@@ -114,6 +121,19 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
     if isinstance(content, list):
         content = "".join(str(part.get("text", "")) if isinstance(part, dict) else str(part) for part in content)
     conclusion = ModelResearchConclusion.model_validate_json(content)
+    supplied_references = {
+        item.provenance_id
+        for item in [
+            *context.market_features,
+            *context.macro_evidence,
+            *context.event_evidence,
+            context.cost_snapshot,
+            *context.model_outputs,
+            *context.native_agent_evidence,
+        ]
+    }
+    if not set(conclusion.evidence_references).issubset(supplied_references):
+        raise ValueError("TRADINGAGENTS_UNGROUNDED_EVIDENCE")
     expected = prompt["required_metadata"]
     # Identity, cutoff and lineage are copied from validated Aurex context,
     # never trusted to a probabilistic model to repeat correctly.
@@ -150,6 +170,7 @@ def main() -> int:
             "LOCAL_LLM_UNAVAILABLE", "MODEL_NOT_LOADED", "CIRCUIT_OPEN",
             "POINT_IN_TIME_VIOLATION", "SECRET_MATERIAL_REJECTED",
             "TRADINGAGENTS_PROVENANCE_MISMATCH", "TRADINGAGENTS_SNAPSHOT_MISMATCH",
+            "TRADINGAGENTS_UNGROUNDED_EVIDENCE",
         )
         if isinstance(exc, ValidationError):
             safe_code = "SCHEMA_VALIDATION_FAILED"
