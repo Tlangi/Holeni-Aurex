@@ -38,6 +38,35 @@ def test_fx_friday_close_is_not_reported_as_missing_market_data() -> None:
     )
 
 
+def test_fx_weekday_outages_are_not_mistaken_for_session_closures() -> None:
+    for stamp in (datetime(2026, 9, 7, 5, 20, tzinfo=timezone.utc),
+                  datetime(2026, 9, 8, 13, 50, tzinfo=timezone.utc),
+                  datetime(2026, 9, 9, 7, 30, tzinfo=timezone.utc)):
+        assert is_regular_session(
+            stamp, calendar_code="FX_24X5", market_timezone="UTC",
+            session_open=None, session_close=None,
+        )
+        assert operational_session_state(
+            stamp, calendar_code="FX_24X5", market_timezone="UTC",
+            session_open=None, session_close=None,
+        ).should_receive_data
+
+
+def test_fx_recorded_full_holiday_is_excluded_from_quality_and_monitoring() -> None:
+    stamp = datetime(2026, 9, 7, 13, 50, tzinfo=timezone.utc)
+    assert not is_regular_session(
+        stamp, calendar_code="FX_24X5", market_timezone="UTC",
+        session_open=None, session_close=None, holidays={stamp.date()},
+    )
+    state = operational_session_state(
+        stamp, calendar_code="FX_24X5", market_timezone="UTC",
+        session_open=None, session_close=None, holidays={stamp.date(): None},
+    )
+    assert (state.status, state.reason, state.should_receive_data) == (
+        "CLOSED", "MARKET_HOLIDAY", False,
+    )
+
+
 def test_fx_weekend_is_closed_and_sunday_reopen_has_grace() -> None:
     closed = operational_session_state(
         datetime(2026, 8, 30, 7, 0, tzinfo=timezone.utc),

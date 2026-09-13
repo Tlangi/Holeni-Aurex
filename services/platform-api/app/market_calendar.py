@@ -33,6 +33,11 @@ def operational_session_state(
     now = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
     now = now.astimezone(timezone.utc)
     if calendar_code == "FX_24X5":
+        # Only an explicitly recorded full closure may suppress weekday feed
+        # expectations. Ordinary FX weekdays do not have a DAX-like overnight
+        # session break; missing candles there remain feed/data gaps.
+        if now.date() in (holidays or {}) and holidays[now.date()] is None:
+            return MarketSessionState("CLOSED", "MARKET_HOLIDAY", False)
         weekday, clock = now.weekday(), now.time().replace(tzinfo=None)
         if weekday == 5 or (weekday == 4 and clock >= FX_WEEK_CLOSE_UTC) or (
             weekday == 6 and clock < FX_WEEK_OPEN_UTC
@@ -103,6 +108,8 @@ def is_regular_session(
         # from gap expectations because individual CFD feeds reopen at slightly
         # different times; the first observed Sunday candle becomes the new
         # continuity anchor.
+        if opened.date() in (holidays or set()):
+            return False
         if opened.weekday() >= 5 or (opened.weekday() == 4 and opened.time() >= time(21)):
             return False
         return True
