@@ -10,7 +10,7 @@ from app.market_calendar import operational_session_state
 from app.market_intelligence import _persist_m5, aggregate_m15_history
 
 
-def schedule_bounded_recovery_jobs(
+def _legacy_schedule_ig_recovery_jobs(
     settings: Settings, *, force_transient_retry: bool = False,
 ) -> list[dict[str, object]]:
     """Register only small, recent, execution-blocking gaps for bounded recovery."""
@@ -87,7 +87,7 @@ def schedule_bounded_recovery_jobs(
     return outcomes
 
 
-def process_one_bounded_recovery(settings: Settings) -> dict[str, object] | None:
+def _legacy_process_ig_recovery(settings: Settings) -> dict[str, object] | None:
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
@@ -183,3 +183,64 @@ def process_one_bounded_recovery(settings: Settings) -> dict[str, object] | None
             )
         connection.commit()
     return {"job_id": job_id, "status": status, "detail": error}
+
+
+def schedule_bounded_recovery_jobs(
+    settings: Settings, *, force_transient_retry: bool = False,
+) -> list[dict[str, object]]:
+    """Queue bounded Dukascopy tick days for unresolved recent stream gaps."""
+    del force_transient_retry
+    outcomes: list[dict[str, object]] = []
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT DISTINCT g.market_id,m.symbol,x.vendor_symbol,
+                      CAST(g.gap_start_utc AS date) gap_day
+               FROM app.data_quality_gaps g
+               JOIN app.markets m ON m.market_id=g.market_id
+               JOIN app.instrument_source_mappings x
+                 ON x.market_id=g.market_id AND x.vendor='DUKASCOPY'
+               WHERE g.resolved_at_utc IS NULL
+                 AND g.classification='LIVE_STREAM_INTERRUPTION'
+                 AND g.gap_end_utc>=DATEADD(day,-7,SYSUTCDATETIME())
+               ORDER BY gap_day,m.symbol"""
+        )
+        for gap in cursor.fetchall():
+            start = gap["gap_day"]
+            end = start + timedelta(days=1)
+            cursor.execute(
+                """SELECT TOP (1) status FROM app.historical_backfill_jobs
+                   WHERE market_id=%s AND vendor='DUKASCOPY' AND source_format='TICK_CSV'
+                     AND partition_start_utc<=%s AND partition_end_utc>=%s
+                     AND status NOT IN ('FAILED','SUPERSEDED')
+                   ORDER BY created_at_utc DESC""",
+                (str(gap["market_id"]), start, end),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                status = str(existing["status"])
+            else:
+                cursor.execute(
+                    """INSERT app.historical_backfill_jobs
+                         (backfill_job_id,market_id,vendor,vendor_symbol,
+                          partition_start_utc,partition_end_utc,source_format,priority,status)
+                       VALUES(%s,%s,'DUKASCOPY',%s,%s,%s,'TICK_CSV',-100,'NOT_STARTED')""",
+                    (str(uuid4()), str(gap["market_id"]), str(gap["vendor_symbol"]), start, end),
+                )
+                status = "NOT_STARTED"
+            outcomes.append({"symbol": str(gap["symbol"]), "status": status,
+                             "vendor": "DUKASCOPY", "gap_day_utc": str(start)})
+        cursor.execute(
+            """UPDATE app.market_data_recovery_jobs
+               SET status='FAILED',last_error_code='IG_HISTORICAL_DISABLED_BY_POLICY',
+                   retry_after_utc=NULL
+               WHERE status IN ('QUEUED','RUNNING','SESSION_DEFERRED','QUOTA_DEFERRED')"""
+        )
+        connection.commit()
+    return outcomes
+
+
+def process_one_bounded_recovery(settings: Settings) -> dict[str, object] | None:
+    """Compatibility shim; the backfill worker processes Dukascopy jobs."""
+    del settings
+    return None

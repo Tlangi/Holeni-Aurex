@@ -121,7 +121,7 @@
                 <small>Tier {{ programme.market_tier }} · {{ programme.programme_type }}</small>
                 <h3>{{ programme.symbol }}</h3>
               </div>
-              <span>{{ programme.status }}</span>
+              <span>{{ effectiveProgrammeStatus(programme) }}</span>
             </div>
             <dl>
               <div>
@@ -160,16 +160,17 @@
             <div class="actions">
               <button
                 type="button"
-                [disabled]="busy() !== '' || !lab.canary_readiness.owner_arm_enabled"
+                [disabled]="busy() !== '' || !lab.canary_readiness.owner_arm_enabled || effectiveProgrammeStatus(programme) !== 'DRAFT' && effectiveProgrammeStatus(programme) !== 'BLOCKED'"
                 (click)="control(programme.experimental_programme_id, 'ARM')"
               >
                 Arm
               </button>
-              <button type="button" (click)="control(programme.experimental_programme_id, 'PAUSE')">
+              <button type="button" [disabled]="busy() !== '' || !['ARMED', 'RUNNING'].includes(effectiveProgrammeStatus(programme))" (click)="control(programme.experimental_programme_id, 'PAUSE')">
                 Pause
               </button>
               <button
                 type="button"
+                [disabled]="busy() !== '' || effectiveProgrammeStatus(programme) !== 'PAUSED'"
                 (click)="control(programme.experimental_programme_id, 'RESUME')"
               >
                 Resume

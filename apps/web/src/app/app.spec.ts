@@ -1,11 +1,12 @@
 import { TestBed } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { ElementRef, signal } from '@angular/core';
 import { vi } from 'vitest';
 import { DashboardComponent } from './app';
 import { DashboardApi } from './dashboard-api';
 import { AuthApi } from './auth-api';
 import { provideRouter, Router } from '@angular/router';
+import { routes } from './app.routes';
 
 function chartCandles(count: number, start = 1.1) {
   return Array.from({ length: count }, (_, index) => {
@@ -41,6 +42,17 @@ class DashboardApiMock {
     ],
     timeframes: ['M5', 'M15'], periods: ['TODAY', '7D', 'ALL'], execution_enabled: false,
   }));
+  ownerReadiness = vi.fn(() => of({ overall_health: 'HEALTHY', trading_mode: 'SHADOW',
+    broker_environment: 'IG_DEMO', live_status: 'DISABLED', data_status: 'SEE_MARKET_SUMMARY',
+    model_status: 'SEE_MARKET_SUMMARY', shadow_status: 'RUNNING', broker_status: 'NOT_ATTESTED_BY_THIS_PAYLOAD',
+    risk_status: 'NOT_ATTESTED_BY_THIS_PAYLOAD', demo_auto_status: 'NOT_READY',
+    human_approved_demo_status: 'NOT_ATTESTED_BY_THIS_PAYLOAD', pending_approvals: 0,
+    reconciliation_unresolved: 0, blocking_reasons: [{ code: 'SHADOW_ONLY',
+      message: 'Shadow evaluation is running. Shadow trades are simulated and cannot send IG orders.', action: 'View shadow activity' }] }));
+  ownerMarkets = vi.fn(() => of({ generated_at_utc: '2026-09-12T00:00:00Z', environment: 'IG_DEMO',
+    markets: [{ symbol: 'EURUSD', display_name: 'EUR/USD', bid: null, ask: null, spread: null,
+      quote_observed_at_utc: null, quote_age_seconds: null, quote_status: 'STALE_OR_UNAVAILABLE',
+      quote_source: null, model_status: 'REJECTED', demo_configured: false, trading_eligibility: 'UNVERIFIED' }] }));
   tradeHistory = vi.fn(() => of({ count: 0, trades: [], pnl_note: '' }));
   tradingReadiness = vi.fn(() => of({ status: 'NOT_READY', blockers: [] }));
   modelReadiness = vi.fn(() => of({ required_feature_rows: 2000, markets: [] }));
@@ -73,7 +85,7 @@ class DashboardApiMock {
     components: [], alerts: [], backups: [], daily_reports: [],
     safety: { trading_mode: 'disabled', live_trading_allowed: false, reporting_has_execution_authority: false },
   }));
-  tradingStatus = vi.fn(() => of({ environment: 'DEMO', mode: 'SHADOW', new_orders_enabled: false, pause_reason: null }));
+  tradingStatus = vi.fn(() => of({ environment: 'DEMO', mode: 'SHADOW', new_orders_enabled: false, pause_reason: null, shadow_evaluations: [] }));
   strategies = vi.fn(() => of({ strategies: [] }));
   changeControl = vi.fn(() => of({ environment: 'DEMO', mode: 'PAUSED', new_orders_enabled: false, pause_reason: null }));
   changeStrategy = vi.fn(() => of({ status: 'PAUSED' }));
@@ -90,7 +102,7 @@ describe('DashboardComponent', () => {
     api = new DashboardApiMock();
     await TestBed.configureTestingModule({
       imports: [DashboardComponent],
-      providers: [{ provide: DashboardApi, useValue: api }, { provide: AuthApi, useValue: auth }, provideRouter([])],
+      providers: [{ provide: DashboardApi, useValue: api }, { provide: AuthApi, useValue: auth }, provideRouter(routes)],
     }).compileComponents();
   });
 
@@ -107,6 +119,72 @@ describe('DashboardComponent', () => {
     expect(compiled.querySelector('h1')?.textContent).toMatch(/Good (morning|afternoon|evening)/);
   });
 
+  it('exposes exactly six owner areas with dedicated guarded routes', () => {
+    const ownerPaths = ['dashboard', 'markets', 'trading', 'research', 'risk', 'system'];
+    for (const path of ownerPaths) {
+      const route = routes.find((candidate) => candidate.path === path);
+      expect(route?.component).toBe(DashboardComponent);
+      expect(route?.canActivate?.length).toBeGreaterThan(0);
+    }
+    expect(routes.find((candidate) => candidate.path === 'markets/:market')).toBeTruthy();
+    expect(routes.find((candidate) => candidate.path === 'research/advanced')).toBeTruthy();
+  });
+
+  it('shows the owner summary and six primary links without technical sidebar clutter', async () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    await fixture.whenStable();
+    const page = fixture.nativeElement as HTMLElement;
+    expect(page.querySelectorAll('.owner-summary article')).toHaveLength(6);
+    const links = Array.from(page.querySelectorAll<HTMLAnchorElement>('.nav-item'));
+    expect(links.map((link) => link.textContent?.trim())).toEqual(['Dashboard', 'Markets', 'Trading', 'Research', 'Risk', 'System']);
+    expect(page.querySelector('#operational-assurance')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('does not fetch chart or deep research data for the initial dashboard route', async () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    await fixture.whenStable();
+    expect(api.ownerReadiness).toHaveBeenCalledOnce();
+    expect(api.candles).not.toHaveBeenCalled();
+    expect(api.researchJobs).not.toHaveBeenCalled();
+    expect(api.modelValidation).not.toHaveBeenCalled();
+  });
+
+  it('uses existing read-only status endpoints when new owner summaries are unavailable', () => {
+    api.ownerReadiness.mockReturnValueOnce(throwError(() => new Error('Not deployed')) as any);
+    api.ownerMarkets.mockReturnValueOnce(throwError(() => new Error('Not deployed')) as any);
+    api.modelReadiness.mockReturnValueOnce(of({ markets: [{ symbol: 'EURUSD', model_status: 'REJECTED', latest_candle_utc: null }] }) as any);
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    component['loadOwnerReadiness']();
+    component['loadOwnerMarkets']();
+    expect(api.tradingStatus).toHaveBeenCalledOnce();
+    expect(api.modelReadiness).toHaveBeenCalledOnce();
+    expect(component['tradingStatus']()?.mode).toBe('SHADOW');
+    expect(component['ownerMarkets']()).toBeNull();
+    expect(component['marketModelStatus']('EURUSD')).toBe('REJECTED');
+  });
+
+  it('prevents decisions on expired proposals before calling the backend', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    component['tradeProposals'].set({ status: 'OWNER_REVIEW', execution_authority: 'NONE', count: 1,
+      proposals: [{ trade_proposal_id: 'expired', status: 'PENDING_OWNER', expires_at_utc: '2020-01-01T00:00:00Z' }] } as any);
+    component['decideProposal']('expired', 'APPROVE');
+    expect(api.decideTradeProposal).not.toHaveBeenCalled();
+    expect(component['proposalMessage']()).toContain('expired');
+    expect(component['proposalRemaining']('2020-01-01T00:00:00Z')).toBe('00:00');
+  });
+
+  it('keeps the Demo boundary and gives an owner action for the current mode', async () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    await fixture.whenStable();
+    const page = fixture.nativeElement as HTMLElement;
+    expect(page.querySelector('.environment-banner')?.textContent).toContain('NO LIVE CAPITAL');
+    expect(page.querySelector('.environment-banner')?.textContent).toContain('LIVE DISABLED');
+    expect(page.querySelector('.attention-panel')?.textContent).toContain('Shadow evaluation is running');
+    expect(page.querySelector<HTMLAnchorElement>('.attention-panel a')?.getAttribute('href')).toBe('#shadow-trades');
+  });
+
   it('shows the source-dollar balance and USD to ZAR exchange rate', async () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     await fixture.whenStable();
@@ -118,6 +196,9 @@ describe('DashboardComponent', () => {
   it('shows audited report and recovery assurance', async () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     await fixture.whenStable();
+    fixture.componentInstance['dashboardTab'].set('system');
+    fixture.componentInstance['loadSystemEvidence']();
+    fixture.detectChanges();
     const assurance = (fixture.nativeElement as HTMLElement).querySelector('#operational-assurance')?.textContent ?? '';
     expect(assurance).toContain('SENT');
     expect(assurance).toContain('RESTORE_VERIFIED');
@@ -128,10 +209,10 @@ describe('DashboardComponent', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const fixture = TestBed.createComponent(DashboardComponent);
     const component = fixture.componentInstance;
-    component['tradingStatus'].set({ environment: 'DEMO', mode: 'SHADOW', new_orders_enabled: false, pause_reason: null });
+    component['tradingStatus'].set({ environment: 'DEMO', mode: 'SHADOW', new_orders_enabled: false, pause_reason: null, shadow_evaluations: [] });
     component['changeExecutionControl']();
     expect(api.changeControl).toHaveBeenCalledWith('PAUSE', expect.any(String));
-    component['tradingStatus'].set({ environment: 'DEMO', mode: 'PAUSED', new_orders_enabled: false, pause_reason: 'test' });
+    component['tradingStatus'].set({ environment: 'DEMO', mode: 'PAUSED', new_orders_enabled: false, pause_reason: 'test', shadow_evaluations: [] });
     component['changeExecutionControl']();
     expect(api.changeControl).toHaveBeenCalledWith('RESUME_SHADOW', expect.any(String));
   });
@@ -147,7 +228,7 @@ describe('DashboardComponent', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const fixture = TestBed.createComponent(DashboardComponent);
     const component = fixture.componentInstance;
-    component['tradingStatus'].set({ environment: 'DEMO', mode: 'PAUSED', new_orders_enabled: false, pause_reason: 'test' });
+    component['tradingStatus'].set({ environment: 'DEMO', mode: 'PAUSED', new_orders_enabled: false, pause_reason: 'test', shadow_evaluations: [] });
     component['startShadowTesting']();
     expect(api.changeControl).toHaveBeenCalledWith('RESUME_SHADOW', expect.any(String));
   });
@@ -202,6 +283,16 @@ describe('DashboardComponent', () => {
     expect(component['autoFollowLatest']()).toBe(true);
   });
 
+  it('renders chart axis and latest candle time in SAST independent of browser timezone', () => {
+    const fixture = TestBed.createComponent(DashboardComponent);
+    const component = fixture.componentInstance;
+    component['marketData'].set({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg',
+      session_date: '2026-08-25', period: 'TODAY', candles: chartCandles(3) });
+    const chart = component['candleChart']();
+    expect(chart.timeTicks[0].label).toContain('10:00');
+    expect(chart.latestLabel).toContain('10:10');
+  });
+
   it('go to latest restores automatic following after historical navigation', () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     const component = fixture.componentInstance;
@@ -221,6 +312,7 @@ describe('DashboardComponent', () => {
     api.candles.mockImplementation((symbol?: string) => symbol === 'EURUSD' ? first : second);
     const fixture = TestBed.createComponent(DashboardComponent);
     await fixture.whenStable();
+    fixture.componentInstance['loadMarket']();
     fixture.componentInstance['selectMarket']('GERMANY40');
     second.next({ symbol: 'GERMANY40', timeframe: 'M5', timezone: 'Africa/Johannesburg', session_date: null, period: '7D', candles: chartCandles(40, 18000) });
     first.next({ symbol: 'EURUSD', timeframe: 'M5', timezone: 'Africa/Johannesburg', session_date: null, period: '7D', candles: chartCandles(40) });
@@ -273,6 +365,7 @@ describe('DashboardComponent', () => {
     fixture.detectChanges();
     expect((fixture.nativeElement as HTMLElement).querySelector('#training-progress')?.textContent).toContain('No training job is running');
     component['dashboardTab'].set('markets');
+    component['marketDetail'].set(true);
     fixture.detectChanges();
     expect((fixture.nativeElement as HTMLElement).querySelector('.data-quality')?.textContent).toContain('UNVERIFIED');
   });
@@ -299,18 +392,19 @@ describe('DashboardComponent', () => {
   it('offers Germany 40 from the backend market inventory', async () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     await fixture.whenStable();
-    fixture.componentInstance['selectDashboardTab']('markets');
+    fixture.componentInstance['dashboardTab'].set('markets');
+    fixture.componentInstance['loadMarketInventory']();
     fixture.detectChanges();
-    const buttons = Array.from(fixture.nativeElement.querySelectorAll('button')) as HTMLButtonElement[];
-    expect(buttons.some((button) => button.textContent?.includes('Germany 40 Cash (E1)'))).toBe(true);
+    const links = Array.from(fixture.nativeElement.querySelectorAll('.owner-market-row')) as HTMLAnchorElement[];
+    expect(links.some((link) => link.textContent?.includes('Germany 40 Cash (E1)'))).toBe(true);
     expect(api.marketInventory).toHaveBeenCalled();
   });
 
-  it('uses dashboard tabs to keep unrelated long sections hidden', async () => {
+  it('keeps unrelated long sections hidden by operational area', async () => {
     const fixture = TestBed.createComponent(DashboardComponent);
     await fixture.whenStable();
     expect(fixture.componentInstance['dashboardTab']()).toBe('overview');
-    fixture.componentInstance['selectDashboardTab']('operations');
+    fixture.componentInstance['dashboardTab'].set('system');
     fixture.detectChanges();
     expect((fixture.nativeElement as HTMLElement).querySelector('#operational-assurance')?.hasAttribute('hidden')).toBe(false);
     expect((fixture.nativeElement as HTMLElement).querySelector('#market-data')?.hasAttribute('hidden')).toBe(true);

@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     allow_demo_trading: bool = False
     allow_live_trading: bool = False
     experimental_demo_enabled: bool = False
+    demo_approval_ttl_seconds: int = Field(default=120, ge=30, le=300)
+    demo_max_entry_drift_atr: float = Field(default=0.25, gt=0, le=2.0)
+    demo_max_entry_drift_spread_multiple: float = Field(default=2.0, gt=0, le=10.0)
+    daily_profit_target_enabled: bool = False
 
     reporting_currency: str = "ZAR"
     app_timezone: str = "Africa/Johannesburg"
@@ -81,12 +85,16 @@ class Settings(BaseSettings):
     auth_max_address_failures: int = Field(default=20, ge=5, le=100)
     auth_lockout_minutes: int = Field(default=30, ge=5, le=1440)
     background_sync_enabled: bool = True
-    account_sync_seconds: int = 60
+    ig_historical_data_enabled: bool = False
+    account_sync_seconds: int = Field(default=300, ge=300, le=3600)
     stale_after_seconds: int = 180
     shadow_cycle_seconds: int = 30
     broker_rule_sync_seconds: int = 900
     model_training_check_seconds: int = 21600
     model_minimum_rows: int = 2000
+    research_model_minimum_rows: int = 500
+    recent_m5_decision_rows: int = Field(default=2000, ge=500, le=10000)
+    recent_m5_max_gap_minutes: int = Field(default=5, ge=5, le=60)
     model_minimum_new_rows: int = 96
     model_acceptance_auc: float = 0.52
     model_walk_forward_windows: int = 3
@@ -116,7 +124,7 @@ class Settings(BaseSettings):
     tradingagents_deep_model: str = ""
     tradingagents_version: str = "0.4.0"
     tradingagents_commit: str = "c95f83dfafa748801ab2be4855e6fcffc93804e4"
-    tradingagents_prompt_version: str = "aurex-forex-v1"
+    tradingagents_prompt_version: str = "aurex-net-edge-v2"
     tradingagents_max_concurrent_runs: int = Field(default=1, ge=1, le=4)
     tradingagents_max_context_chars: int = Field(default=48000, ge=2000, le=250000)
     tradingagents_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
@@ -173,6 +181,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_external_security(self) -> "Settings":
+        if self.daily_profit_target_enabled:
+            raise ValueError("DAILY_PROFIT_TARGET_IS_PROHIBITED")
         if self.app_env.lower() in {"production", "staging"}:
             missing = []
             if len(self.auth_hash_pepper) < 32: missing.append("AUTH_HASH_PEPPER")
@@ -268,6 +278,13 @@ class Settings(BaseSettings):
     def enforce_model_evidence_floor(cls, value: int) -> int:
         if value < 2000:
             raise ValueError("MODEL_MINIMUM_ROWS cannot be below the 2,000-row evidence floor")
+        return value
+
+    @field_validator("research_model_minimum_rows")
+    @classmethod
+    def validate_research_model_minimum_rows(cls, value: int) -> int:
+        if value < 500:
+            raise ValueError("RESEARCH_MODEL_MINIMUM_ROWS cannot be below 500 rows")
         return value
 
     @field_validator("model_minimum_new_rows")

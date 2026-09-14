@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -10,7 +10,7 @@ from app.database import open_database
 from app.historical_quality import classify_missing_minutes, expected_trading_minutes, ohlc_valid
 
 
-VALIDATION_VERSION = "HISTORICAL_PARTITION_V2"
+VALIDATION_VERSION = "HISTORICAL_PARTITION_V3_CANONICAL"
 
 
 def _naive_utc(value):
@@ -19,8 +19,39 @@ def _naive_utc(value):
     return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def effective_validation_end(requested_end, *, now_utc: datetime | None = None):
+    """Never classify minutes which have not completed yet as missing data."""
+    end = _naive_utc(requested_end)
+    now = _naive_utc(now_utc or datetime.now(timezone.utc)).replace(second=0, microsecond=0)
+    return min(end, now) if end is not None else None
+
+
+def effective_observed_end(end, observed, *, active_partition: bool):
+    """Exclude a vendor-publication tail while retaining internal missing intervals."""
+    if not active_partition or not observed:
+        return end
+    return min(end, max(observed) + timedelta(minutes=1))
+
+
+def validation_failure_detail(result: dict[str, object]) -> str:
+    """Return stable, actionable evidence instead of a generic worker failure."""
+    gates = result.get("failed_gates") or ["UNKNOWN"]
+    recent = result.get("recent_unexpected_gaps") or []
+    interval = ""
+    if recent:
+        first = recent[0]
+        interval = f"; first_recent_gap={first['start_utc']}..{first['end_utc']}"
+    return (
+        f"failed_gates={','.join(str(gate) for gate in gates)}; "
+        f"coverage={float(result.get('coverage_percentage') or 0):.6%}; "
+        f"invalid_ohlc={int(result.get('invalid_ohlc_count') or 0)}; "
+        f"timestamp_errors={int(result.get('timestamp_error_count') or 0)}; "
+        f"recent_gap_count={len(recent)}{interval}"
+    )
+
+
 def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, object]:
-    """Validate one immutable import partition; never borrow evidence from another batch."""
+    """Validate one vendor partition on a canonical timeline without changing provenance."""
     with open_database(settings) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
@@ -38,7 +69,10 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
         if not batch:
             raise ValueError("historical import batch not found")
         start = _naive_utc(batch["requested_start_utc"])
-        end = _naive_utc(batch["requested_end_utc"])
+        requested_end = _naive_utc(batch["requested_end_utc"])
+        completed_minute = _naive_utc(datetime.now(timezone.utc)).replace(second=0, microsecond=0)
+        active_partition = requested_end is not None and requested_end > completed_minute
+        end = effective_validation_end(requested_end)
         if start is None or end is None or end <= start:
             raise ValueError("historical import batch has an invalid requested period")
 
@@ -47,6 +81,27 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
             (str(batch["calendar_code"]),),
         )
         holidays = {row["holiday_date"] for row in cursor.fetchall()}
+        vendor_prefix = f"{str(batch['vendor']).upper()}%"
+        cursor.execute(
+            """SELECT timestamp_utc,bid_open,bid_high,bid_low,bid_close,
+                      ask_open,ask_high,ask_low,ask_close,import_batch_id,source
+               FROM app.market_candles_m1
+               WHERE market_id=%s AND source LIKE %s
+                 AND timestamp_utc>=%s AND timestamp_utc<%s
+               ORDER BY timestamp_utc""",
+            (str(batch["market_id"]), vendor_prefix, start, end),
+        )
+        candles = cursor.fetchall()
+        if active_partition and candles:
+            # Historical vendor publication can trail the live clock. Validate
+            # through its latest completed candle, not through an unavailable
+            # future/vendor-lagging tail. Missing intervals before that candle
+            # remain visible and recent ones still block.
+            end = effective_observed_end(
+                end, [_naive_utc(row["timestamp_utc"]) for row in candles],
+                active_partition=True,
+            )
+            candles = [row for row in candles if _naive_utc(row["timestamp_utc"]) < end]
         expected = expected_trading_minutes(
             start, end,
             calendar_code=str(batch["calendar_code"]),
@@ -55,15 +110,6 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
             session_close=batch["session_close_local"],
             holidays=holidays,
         )
-        cursor.execute(
-            """SELECT timestamp_utc,bid_open,bid_high,bid_low,bid_close,
-                      ask_open,ask_high,ask_low,ask_close
-               FROM app.market_candles_m1
-               WHERE import_batch_id=%s AND timestamp_utc>=%s AND timestamp_utc<%s
-               ORDER BY timestamp_utc""",
-            (import_batch_id, start, end),
-        )
-        candles = cursor.fetchall()
         observed = {_naive_utc(row["timestamp_utc"]) for row in candles}
         gaps = classify_missing_minutes(expected, observed, symbol=str(batch["symbol"]))
         invalid = sum(
@@ -83,7 +129,14 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
         )
 
         structural_pass = bool(candles) and invalid == 0 and timestamp_errors == 0 and rejected_ratio <= Decimal(str(settings.historical_maximum_rejected_tick_ratio))
-        calendar_pass = coverage >= Decimal(str(settings.historical_minimum_coverage)) and largest_gap <= settings.historical_maximum_largest_gap_minutes and len(gaps) <= settings.historical_maximum_unexpected_gaps
+        recent_cutoff = _naive_utc(datetime.now(timezone.utc) - timedelta(
+            hours=settings.execution_gap_lookback_hours
+        ))
+        recent_gaps = [gap for gap in gaps if gap.unexpected and gap.end_utc >= recent_cutoff]
+        calendar_pass = (
+            coverage >= Decimal(str(settings.historical_minimum_coverage))
+            and not recent_gaps
+        )
 
         cursor.execute("DELETE FROM app.historical_partition_gaps WHERE import_batch_id=%s", (import_batch_id,))
         for gap in gaps:
@@ -110,12 +163,21 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
             state = "CALENDAR_VALIDATED"
         else:
             state = "CROSS_SOURCE_VALIDATED"
+        candle_quality = (
+            "VALIDATED" if eligible else "ACCEPTABLE"
+            if structural_pass and calendar_pass else "UNVERIFIED"
+        )
         details = {
             "structural_pass": structural_pass, "calendar_pass": calendar_pass,
             "cross_source_pass": cross_pass, "mapping_pass": mapping_pass,
             "rejected_tick_ratio": float(rejected_ratio),
             "comparison_status": comparison["primary"]["status"],
             "comparisons": comparison["comparisons"],
+            "canonical_vendor_timeline": True,
+            "provenance_batch_count": len({str(row["import_batch_id"]) for row in candles}),
+            "old_gap_warning_count": len(gaps) - len(recent_gaps),
+            "recent_unexpected_gap_count": len(recent_gaps),
+            "effective_validation_end_utc": end.isoformat(),
         }
         cursor.execute(
             """UPDATE app.historical_import_batches SET expected_trading_minutes=%s,
@@ -132,9 +194,11 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
         cursor.execute(
             """UPDATE app.market_candles_m1 SET quality_state=%s,research_eligible=%s,
                  instrument_equivalence=%s
-               WHERE import_batch_id=%s""",
-            ("VALIDATED" if eligible else "UNVERIFIED", int(eligible),
-             str(batch["instrument_equivalence"] or "UNVERIFIED"), import_batch_id),
+               WHERE market_id=%s AND source LIKE %s
+                 AND timestamp_utc>=%s AND timestamp_utc<%s""",
+            (candle_quality, int(eligible),
+             str(batch["instrument_equivalence"] or "UNVERIFIED"),
+             str(batch["market_id"]), vendor_prefix, start, end),
         )
         connection.commit()
     return {
@@ -142,6 +206,16 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
         "validation_state": state, "research_eligible": eligible,
         "coverage_percentage": float(coverage), "unexpected_gap_count": len(gaps),
         "largest_unexpected_gap_minutes": largest_gap, "cross_source": comparison,
+        "invalid_ohlc_count": invalid, "timestamp_error_count": timestamp_errors,
+        "recent_unexpected_gaps": [
+            {"start_utc": gap.start_utc.isoformat(), "end_utc": gap.end_utc.isoformat(),
+             "missing_minutes": gap.missing_minutes} for gap in recent_gaps
+        ],
+        "failed_gates": [
+            name for name, passed in (("STRUCTURAL", structural_pass),
+                                      ("COMPLETENESS_OR_RECENT_GAPS", calendar_pass))
+            if not passed
+        ],
     }
 
 
@@ -154,14 +228,10 @@ def _reconcile_partition(cursor, batch, import_batch_id: str, start, end, settin
         (import_batch_id,),
     )
     cursor.execute(
-        """SELECT DISTINCT b.source
-           FROM app.market_candles_m1 a
-           JOIN app.market_candles_m1 b ON b.market_id=a.market_id
-             AND b.import_batch_id<>a.import_batch_id
-           WHERE a.import_batch_id=%s AND a.timestamp_utc>=%s AND a.timestamp_utc<%s
-             AND b.timestamp_utc>=%s AND b.timestamp_utc<%s
+        """SELECT DISTINCT b.source FROM app.market_candles_m1 b
+           WHERE b.market_id=%s AND b.timestamp_utc>=%s AND b.timestamp_utc<%s
              AND b.source NOT LIKE %s""",
-        (import_batch_id, start, end, start, end, f"{vendor}%"),
+        (str(batch["market_id"]), start, end, f"{vendor}%"),
     )
     sources = sorted(str(row["source"]) for row in cursor.fetchall())
     # IG is an explicit governed evidence lane. Persist absence instead of allowing
@@ -193,10 +263,11 @@ def _reconcile_source(cursor, batch, import_batch_id: str, start, end,
                   COALESCE(b.mid_close,b.bid_close) AS other_close
            FROM app.market_candles_m1 a
            JOIN app.market_candles_m1 b ON b.market_id=a.market_id AND b.timestamp_utc=a.timestamp_utc
-             AND b.import_batch_id<>a.import_batch_id AND b.source=%s
-           WHERE a.import_batch_id=%s AND a.timestamp_utc>=%s AND a.timestamp_utc<%s
+             AND b.source=%s
+           WHERE a.market_id=%s AND a.source LIKE %s
+             AND a.timestamp_utc>=%s AND a.timestamp_utc<%s
              """,
-        (comparison_source, import_batch_id, start, end),
+        (comparison_source, str(batch["market_id"]), f"{str(batch['vendor']).upper()}%", start, end),
     )
     rows = cursor.fetchall()
     tolerance = Decimal(str(settings.historical_cross_source_tolerance_ratio))

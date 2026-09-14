@@ -45,6 +45,15 @@ from app.research_protocol import (
 
 TOURNAMENT_VERSION = "MODEL_TOURNAMENT_V3_OPEN_SOURCE_STRICT"
 FEATURE_VERSION = "FEATURES_V1"
+USDJPY_OPPORTUNITY_HYPOTHESIS_VERSION = "USDJPY_LNY_STRONG_UPTREND_V2"
+USDJPY_OPPORTUNITY_POLICY = {
+    "version": USDJPY_OPPORTUNITY_HYPOTHESIS_VERSION,
+    "sessions": ["LONDON_NEW_YORK_OVERLAP"],
+    "trend_regimes": ["STRONG_UPTREND"],
+    "volatility_regimes": [],
+    "regime_combine": "ALL",
+    "outside_policy_action": "HOLD",
+}
 
 
 class ModelTournamentRequest(BaseModel):
@@ -184,6 +193,7 @@ def run_selective_tournament(
     frame, symbol: str, settings: Settings, *,
     candidate_set: tuple[Challenger, ...] | None = None,
     target_set: tuple[object, ...] | None = None,
+    eligibility_policy: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Compare market-specific ternary targets and challengers on development only."""
     market = symbol.upper()
@@ -199,6 +209,7 @@ def run_selective_tournament(
                 minimum_rows=settings.model_minimum_rows,
                 configured_cost_bps=settings.model_round_trip_cost_bps,
                 walk_forward_windows=settings.model_walk_forward_windows,
+                eligibility_policy=eligibility_policy,
             )
             result.pop("_model", None)
             outcomes.append({
@@ -358,6 +369,103 @@ def run_and_record_selective_tournament(
     return {"experiment_id": experiment_id, **outcome,
             "development_rows": len(frame), "configuration_hash": configuration_hash,
             "feature_version": str(market["features_version"] or FEATURE_VERSION)}
+
+
+def run_usdjpy_opportunity_hypothesis(settings: Settings, tenant_id: str) -> dict[str, object]:
+    """Run the one predeclared USD/JPY opportunity challenger on development only."""
+    symbol = "USDJPY"
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT TOP (1) l.*,m.symbol,s.target_sha256
+               FROM app.research_lineages l JOIN app.markets m ON m.market_id=l.market_id
+               JOIN app.research_target_specs s ON s.research_target_spec_id=l.research_target_spec_id
+               WHERE l.tenant_id=%s AND m.symbol=%s AND l.status='RESERVED'
+               ORDER BY l.created_at_utc DESC""", (tenant_id, symbol),
+        )
+        lineage = cursor.fetchone()
+        if not lineage:
+            raise ValueError("A reserved USDJPY development boundary is required")
+        target = next((item for item in TARGET_CATALOG[symbol]
+                       if item.digest == str(lineage["target_sha256"])), None)
+        if target is None:
+            raise ValueError("The reserved target is not in the governed catalogue")
+        cursor.execute(
+            """SELECT TOP (1) passed,dataset_sha256 FROM app.dataset_boundary_audits
+               WHERE tenant_id=%s AND market_id=%s AND research_lineage_id=%s
+               ORDER BY evaluated_at_utc DESC""",
+            (tenant_id, str(lineage["market_id"]), str(lineage["research_lineage_id"])),
+        )
+        audit = cursor.fetchone()
+        if not audit or not bool(audit["passed"]):
+            raise ValueError("A passing immutable dataset boundary audit is required")
+        frame = _market_frame(cursor, str(lineage["market_id"]))
+    start = pd.Timestamp(lineage["development_start_utc"]).tz_localize("UTC")
+    end = pd.Timestamp(lineage["development_end_utc"]).tz_localize("UTC")
+    holdout_start = pd.Timestamp(lineage["holdout_start_utc"]).tz_localize("UTC")
+    development = frame.loc[(frame.index >= start) & (frame.index <= end)].copy()
+    if development.empty or development.index.max() >= holdout_start:
+        raise ValueError("Development evidence reaches the reserved holdout")
+    configuration = {
+        "experiment_version": USDJPY_OPPORTUNITY_HYPOTHESIS_VERSION,
+        "policy": USDJPY_OPPORTUNITY_POLICY,
+        "research_protocol_version": PROTOCOL_VERSION,
+        "research_lineage_id": str(lineage["research_lineage_id"]),
+        "target_sha256": target.digest,
+        "dataset_sha256": str(audit["dataset_sha256"]),
+        "development_start_utc": development.index.min().isoformat(),
+        "development_end_utc": development.index.max().isoformat(),
+        "holdout_start_utc": holdout_start.isoformat(),
+        "holdout_excluded": True,
+        "walk_forward_windows": settings.model_walk_forward_windows,
+        "cost_stress": ["NORMAL_OBSERVED", "SPREAD_X1_25", "SPREAD_X1_50", "SLIPPAGE_X2", "COMBINED_STRESSED"],
+    }
+    configuration_hash = hashlib.sha256(json.dumps(configuration, sort_keys=True).encode()).hexdigest()
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT TOP (1) experiment_id,outcome_json FROM app.research_experiments
+               WHERE tenant_id=%s AND configuration_hash=%s AND status='COMPLETED'""",
+            (tenant_id, configuration_hash),
+        )
+        prior = cursor.fetchone()
+        if prior:
+            return {"experiment_id": str(prior["experiment_id"]),
+                    "status": "IMMUTABLE_RESULT_EXISTS", **json.loads(prior["outcome_json"])}
+    outcome = run_selective_tournament(
+        development, symbol, settings, target_set=(target,),
+        eligibility_policy=USDJPY_OPPORTUNITY_POLICY,
+    )
+    experiment_id = str(uuid4())
+    identity = source_identity()
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """INSERT app.research_experiments
+               (experiment_id,tenant_id,market_id,strategy_version,feature_version,label_version,
+                model_version,regime_version,cost_model_version,retrain_type,training_start_utc,
+                training_end_utc,validation_start_utc,validation_end_utc,configuration_hash,status,
+                notes,outcome_json,completed_at_utc,research_lineage_id,validation_policy_version,
+                label_horizon_bars,label_horizon_minutes,label_definition_hash,code_commit,dirty_worktree,
+                research_target_spec_id,research_protocol_version)
+               VALUES(%s,%s,%s,'1.0',%s,%s,NULL,%s,%s,'MODEL_TOURNAMENT',%s,%s,%s,%s,%s,
+                'COMPLETED',%s,%s,SYSUTCDATETIME(),%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (experiment_id, tenant_id, str(lineage["market_id"]),
+             FEATURE_VERSION, target.version,
+             REGIME_VERSION, str(lineage["cost_model_version"]),
+             development.index.min().to_pydatetime(), development.index.max().to_pydatetime(),
+             outcome["candidates"][0]["windows"][0]["validation_start"],
+             outcome["candidates"][0]["windows"][-1]["validation_end"], configuration_hash,
+             "Predeclared USDJPY London/New York overlap and strong-uptrend/high-volatility development hypothesis",
+             json.dumps({**outcome, "configuration": configuration, "source_identity": identity}, default=str),
+             str(lineage["research_lineage_id"]), VALIDATION_POLICY_VERSION,
+             target.horizon_bars, target.horizon_bars * 15, target.digest,
+             str(identity["source_identity"]), int(bool(identity["dirty_worktree"])),
+             str(lineage["research_target_spec_id"]), PROTOCOL_VERSION),
+        )
+        connection.commit()
+    return {"experiment_id": experiment_id, "status": "COMPLETED", **outcome,
+            "configuration": configuration, "configuration_hash": configuration_hash}
 
 
 def _feature_importance(model: object) -> list[dict[str, float | str]]:

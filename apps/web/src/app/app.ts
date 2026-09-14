@@ -1,11 +1,13 @@
 import { afterNextRender, Component, computed, DestroyRef, ElementRef, inject, signal, ViewChild } from '@angular/core';
 import { DatePipe } from '@angular/common';
-import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, ReconciliationData, ReplayRunsData, ResearchJobsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradeProposalsData, TradingReadinessData, TradingStatusData } from './dashboard-api';
+import { DashboardApi, DashboardData, ForwardEvidenceData, MacroStatusData, MarketCandle, MarketCandlesData, MarketInventoryData, ModelReadinessData, ModelValidationData, OperationsStatusData, OrderIntentsData, OwnerMarketSummaryData, OwnerReadinessData, ReconciliationData, ReplayRunsData, ResearchJobsData, RiskStatusData, ShadowPerformanceData, ShadowTradesData, StrategiesData, TradeHistoryData, TradeProposalsData, TradingReadinessData, TradingStatusData } from './dashboard-api';
 import { AuthApi } from './auth-api';
-import { Router } from '@angular/router';
-import { catchError, finalize, map, of, Subject, switchMap } from 'rxjs';
+import { NavigationEnd, Router } from '@angular/router';
+import { catchError, filter, finalize, map, of, Subject, switchMap } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { clampWindow, isAtLatest, latestWindow, mergeStreamCandle, normalizeCandles, recommendedCandleCount, visiblePriceBounds } from './chart-utils';
+import { TradeApprovalsComponent } from './trade-approvals';
+import { RiskSummaryComponent } from './risk-summary';
 
 interface NavigationItem {
   label: string;
@@ -21,14 +23,14 @@ interface NavigationSection {
 
 @Component({
   selector: 'aurex-dashboard',
-  imports: [DatePipe],
+  imports: [DatePipe, TradeApprovalsComponent, RiskSummaryComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss'
 })
 export class DashboardComponent {
   private readonly dashboardApi = inject(DashboardApi);
   private readonly authApi = inject(AuthApi);
-  private readonly router = inject(Router);
+  protected readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
   private chartViewport?: ElementRef<HTMLDivElement>;
   @ViewChild('chartViewport') set chartViewportRef(value: ElementRef<HTMLDivElement> | undefined) {
@@ -37,15 +39,14 @@ export class DashboardComponent {
   }
 
   protected readonly sidebarOpen = signal(false);
-  protected readonly dashboardTab = signal<'overview' | 'research' | 'markets' | 'trading' | 'operations'>('overview');
-  protected readonly dashboardTabs = [
-    ['overview', 'Overview'], ['research', 'Models & evidence'], ['markets', 'Markets & charts'],
-    ['trading', 'Trading activity'], ['operations', 'Operations'],
-  ] as const;
+  protected readonly dashboardTab = signal<'overview' | 'research' | 'markets' | 'trading' | 'risk' | 'system'>('overview');
   protected readonly dashboardData = signal<DashboardData | null>(null);
   protected readonly marketData = signal<MarketCandlesData | null>(null);
   protected readonly marketInventory = signal<MarketInventoryData | null>(null);
+  protected readonly ownerMarkets = signal<OwnerMarketSummaryData | null>(null);
+  protected readonly ownerReadiness = signal<OwnerReadinessData | null>(null);
   protected readonly selectedMarket = signal('EURUSD');
+  protected readonly marketDetail = signal(false);
   protected readonly selectedTimeframe = signal('M5');
   protected readonly selectedPeriod = signal('7D');
   protected readonly marketLoading = signal(true);
@@ -71,8 +72,32 @@ export class DashboardComponent {
   protected readonly shadowPerformance = signal<ShadowPerformanceData | null>(null);
   protected readonly orderIntents = signal<OrderIntentsData | null>(null);
   protected readonly tradeProposals = signal<TradeProposalsData | null>(null);
+  protected readonly pendingProposalCount = computed(() =>
+    this.ownerReadiness()?.pending_approvals ??
+    (this.tradeProposals()?.proposals ?? []).filter((proposal) => proposal.status === 'PENDING_OWNER').length,
+  );
+  protected readonly ownerHealth = computed(() => {
+    if (this.ownerReadiness()) return this.ownerReadiness()!.overall_health.replace('_', ' ');
+    if (!this.dashboardData() && !this.operationsStatus()) return 'OFFLINE';
+    if (this.reconciliation()?.unresolved) return 'ACTION REQUIRED';
+    if (this.operationsStatus()?.status === 'ATTENTION' || this.dashboardData()?.data_status !== 'current') return 'DEGRADED';
+    return 'HEALTHY';
+  });
+  protected readonly ownerAttention = computed(() => {
+    const reason = this.ownerReadiness()?.blocking_reasons[0];
+    if (reason) return { message: reason.message, target: reason.code === 'PENDING_APPROVAL' ? 'trade-proposals'
+      : reason.code === 'RECONCILIATION' ? 'reconciliation'
+      : reason.code === 'DEMO_AUTO_NOT_READY' ? 'system-status' : 'shadow-trades', action: reason.action };
+    if (this.pendingProposalCount()) return { message: `${this.pendingProposalCount()} trade proposal(s) await your review. Approval records a decision; it does not submit an IG order.`, target: 'trade-proposals', action: 'Review proposals' };
+    if (this.operationsStatus()?.status === 'ATTENTION') return { message: 'One or more Aurex services need attention. Review service status before relying on market monitoring.', target: 'operational-assurance', action: 'View services' };
+    if (this.tradingStatus()?.mode === 'PAUSED') return { message: 'Signal evaluation is paused by the owner.', target: 'risk-management', action: 'View controls' };
+    if (this.tradingStatus()?.mode === 'SHADOW') return { message: 'Shadow evaluation is running. Shadow trades are simulated and cannot send IG orders.', target: 'shadow-trades', action: 'View shadow activity' };
+    if (this.tradingReadiness()?.blockers?.length) return { message: 'Demo execution is blocked by current safety checks. Review the specific conditions before considering activation.', target: 'system-status', action: 'View readiness' };
+    return { message: 'No Demo trade is pending. Aurex is monitoring for qualifying opportunities.', target: 'market-data', action: 'View markets' };
+  });
   protected readonly proposalBusy = signal('');
   protected readonly proposalMessage = signal('');
+  protected readonly currentTime = signal(Date.now());
   protected readonly riskStatus = signal<RiskStatusData | null>(null);
   protected readonly reconciliation = signal<ReconciliationData | null>(null);
   protected readonly operationsStatus = signal<OperationsStatusData | null>(null);
@@ -100,9 +125,11 @@ export class DashboardComponent {
   private trainingRefreshTimer: number | null = null;
   private marketSocket: WebSocket | null = null;
   private trainingSocket: WebSocket | null = null;
+  private viewLoaded = false;
   private marketReconnectTimer: number | null = null;
   private trainingReconnectTimer: number | null = null;
   private marketReconnectAttempt = 0;
+  private lastMarketRequestKey = '';
   private marketStreamGeneration = 0;
   private chartPointerId: number | null = null;
   private readonly chartPointers = new Map<number, { x: number; y: number }>();
@@ -125,15 +152,37 @@ export class DashboardComponent {
     return role.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   });
 
+  protected marketModelStatus(symbol: string): string {
+    return this.ownerMarkets()?.markets.find((market) => market.symbol === symbol)?.model_status
+      ?? this.modelReadiness()?.markets.find((market) => market.symbol === symbol)?.model_status ?? 'Unknown';
+  }
+
+  protected marketFreshness(symbol: string): string {
+    const summary = this.ownerMarkets()?.markets.find((market) => market.symbol === symbol);
+    if (summary) return summary.quote_status === 'CURRENT_IG' ? 'Current IG' : 'Stale or unavailable';
+    const latest = this.modelReadiness()?.markets.find((market) => market.symbol === symbol)?.latest_candle_utc;
+    if (!latest) return 'Unknown';
+    return Date.now() - Date.parse(latest) > 20 * 60_000 ? 'Stale or closed' : 'Current';
+  }
+
+  protected marketQuote(symbol: string): OwnerMarketSummaryData['markets'][number] | undefined {
+    return this.ownerMarkets()?.markets.find((market) => market.symbol === symbol);
+  }
+
   protected promotionFor(symbol: string) {
     return this.modelReadiness()?.markets.find((market) => market.symbol === symbol)?.forward_shadow ?? null;
   }
   protected readonly syncError = signal('');
 
   protected readonly navigation: NavigationSection[] = [
-    { group: 'Overview', items: [{ label: 'Dashboard', icon: 'grid', target: 'dashboard-top', active: true }] },
-    { group: 'Trading', items: [{ label: 'Market data', icon: 'chart', target: 'market-data' }, { label: 'Macro intelligence', icon: 'globe', target: 'macro-intelligence' }, { label: 'Model readiness', icon: 'gauge', target: 'model-readiness' }, { label: 'Forward evidence', icon: 'trend', target: 'forward-evidence' }, { label: 'Replay laboratory', icon: 'clock', target: 'replay-laboratory' }, { label: 'Trade proposals', icon: 'grid', target: 'trade-proposals' }, { label: 'Shadow trades', icon: 'trend', target: 'shadow-trades' }, { label: 'Strategies', icon: 'gauge', target: 'strategies' }, { label: 'Orders', icon: 'grid', target: 'orders' }, { label: 'Open positions', icon: 'trend', target: 'open-positions' }, { label: 'Trade history', icon: 'clock', target: 'trade-history' }] },
-    { group: 'Operations', items: [{ label: 'Assurance', icon: 'grid', target: 'operational-assurance' }, { label: 'Risk management', icon: 'gauge', target: 'risk-management' }, { label: 'Reconciliation', icon: 'clock', target: 'reconciliation' }, { label: 'System status', icon: 'gauge', target: 'system-status' }] },
+    { group: 'Operate', items: [
+      { label: 'Dashboard', icon: 'grid', target: '/dashboard' },
+      { label: 'Markets', icon: 'chart', target: '/markets' },
+      { label: 'Trading', icon: 'trend', target: '/trading' },
+      { label: 'Research', icon: 'gauge', target: '/research' },
+      { label: 'Risk', icon: 'gauge', target: '/risk' },
+      { label: 'System', icon: 'grid', target: '/system' },
+    ] },
   ];
 
   protected readonly metrics = computed(() => {
@@ -223,6 +272,13 @@ export class DashboardComponent {
   });
 
   constructor() {
+    this.syncRoute();
+    this.router.events.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd),
+      takeUntilDestroyed(this.destroyRef)).subscribe(() => this.syncRoute());
+    if (typeof window !== 'undefined') {
+      const clock = window.setInterval(() => this.currentTime.set(Date.now()), 1000);
+      this.destroyRef.onDestroy(() => window.clearInterval(clock));
+    }
     this.marketRequests.pipe(
       switchMap((request) => {
         this.marketLoading.set(true);
@@ -264,28 +320,23 @@ export class DashboardComponent {
       this.trainingSocket?.close(1000, 'component destroyed');
     });
     afterNextRender(() => {
-      this.loadDashboard(false);
-      this.loadMarketInventory();
-      this.loadMarket();
-      this.loadTradeHistory();
-      this.loadTradingReadiness();
-      this.loadTradingOperations();
-      this.loadResearchJobs();
-      this.connectTrainingStream();
+      this.viewLoaded = true;
+      this.loadRouteEvidence();
       this.marketRefreshTimer = window.setInterval(() => {
         if (this.dashboardTab() === 'markets' && !this.marketLoading() && this.streamState() !== 'LIVE') this.loadMarket();
       }, 120_000);
       this.trainingRefreshTimer = window.setInterval(() => {
-        if (this.trainingStreamState() !== 'LIVE') this.loadResearchJobs();
+        if (this.dashboardTab() === 'research' && this.trainingStreamState() !== 'LIVE') this.loadResearchJobs();
       }, 30_000);
     });
   }
 
   protected selectMarket(symbol: string): void {
-    if (symbol === this.selectedMarket()) return;
+    if (symbol === this.selectedMarket() && this.marketDetail()) return;
     this.selectedMarket.set(symbol);
     this.disconnectMarketStream();
     this.loadMarket();
+    void this.router.navigateByUrl(`/markets/${encodeURIComponent(symbol)}`);
   }
 
   protected selectTimeframe(timeframe: string): void {
@@ -317,36 +368,120 @@ export class DashboardComponent {
     this.sidebarOpen.update((value) => !value);
   }
 
-  protected selectDashboardTab(tab: 'overview' | 'research' | 'markets' | 'trading' | 'operations'): void {
-    this.dashboardTab.set(tab);
-    this.sidebarOpen.set(false);
-    requestAnimationFrame(() => {
-      const tabs = document.querySelector<HTMLElement>('.dashboard-tabs');
-      if (typeof tabs?.scrollIntoView === 'function') tabs.scrollIntoView({ behavior: 'smooth' });
-      if (tab === 'markets') this.refreshChartDimensions(true);
-    });
-  }
-
   protected navigateTo(target: string, event: Event): void {
     event.preventDefault();
-    const tab = target === 'dashboard-top' ? 'overview'
-      : ['model-validation', 'model-readiness', 'forward-evidence', 'replay-laboratory', 'macro-intelligence'].includes(target) ? 'research'
-      : target === 'market-data' ? 'markets'
-      : ['open-positions', 'strategies', 'orders', 'shadow-trades', 'trade-history'].includes(target) ? 'trading'
-      : 'operations';
-    this.dashboardTab.set(tab);
+    const path = target === 'dashboard-top' ? '/dashboard'
+      : ['model-validation', 'model-readiness', 'forward-evidence', 'replay-laboratory', 'macro-intelligence', 'strategies'].includes(target) ? '/research'
+      : target === 'market-data' ? '/markets'
+      : ['open-positions', 'orders', 'trade-proposals', 'shadow-trades', 'trade-history'].includes(target) ? '/trading'
+      : target === 'risk-management' ? '/risk' : '/system';
     this.sidebarOpen.set(false);
-    requestAnimationFrame(() => {
+    void this.router.navigateByUrl(path).then(() => requestAnimationFrame(() => {
       const element = document.getElementById(target);
       if (typeof element?.scrollIntoView === 'function') {
         element.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
-      if (tab === 'markets') this.refreshChartDimensions(true);
-    });
+      if (path === '/markets') this.refreshChartDimensions(true);
+    }));
+  }
+
+  private syncRoute(): void {
+    const path = this.router.url.split('?')[0].split('#')[0];
+    const area = path.startsWith('/markets') ? 'markets'
+      : path === '/trading' ? 'trading' : path === '/research' ? 'research'
+      : path === '/risk' ? 'risk' : path === '/system' ? 'system' : 'overview';
+    this.dashboardTab.set(area);
+    const market = path.match(/^\/markets\/([A-Z0-9]+)$/)?.[1];
+    this.marketDetail.set(!!market);
+    if (market && market !== this.selectedMarket()) {
+      this.selectedMarket.set(market);
+    }
+    if (this.viewLoaded) this.loadRouteEvidence();
+    if (area === 'markets') requestAnimationFrame(() => this.refreshChartDimensions(true));
+  }
+
+  private loadRouteEvidence(): void {
+    const area = this.dashboardTab();
+    this.loadOwnerReadiness();
+    if (!['overview', 'trading', 'system'].includes(area)) this.loading.set(false);
+    if (area === 'overview') {
+      this.loadDashboard(false);
+      this.loadRiskEvidence();
+    } else if (area === 'trading') {
+      this.loadDashboard(false);
+      this.loadTradingOperations();
+      this.loadShadowEvidence();
+      this.loadTradeHistory();
+    } else if (area === 'research') {
+      this.loadMarketInventory();
+      this.loadResearchEvidence();
+      this.loadStrategies();
+    } else if (area === 'risk') {
+      this.loadRiskEvidence();
+    } else if (area === 'system') {
+      this.loadDashboard(false);
+      this.loadTradingReadiness();
+      this.loadSystemEvidence();
+    }
+    if (this.dashboardTab() === 'markets') {
+      this.loadMarketInventory();
+      this.loadOwnerMarkets();
+      if (this.marketDetail()) this.loadMarket();
+      else this.disconnectMarketStream();
+    } else {
+      this.disconnectMarketStream();
+    }
+    if (this.dashboardTab() === 'research') {
+      this.loadResearchJobs();
+      if (!this.trainingSocket) this.connectTrainingStream();
+    } else {
+      if (this.trainingReconnectTimer !== null) window.clearTimeout(this.trainingReconnectTimer);
+      this.trainingReconnectTimer = null;
+      const socket = this.trainingSocket;
+      this.trainingSocket = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'left research area');
+    }
+  }
+
+  protected proposalRemaining(expiresAt: string): string {
+    const seconds = Math.max(0, Math.ceil((Date.parse(expiresAt) - this.currentTime()) / 1000));
+    return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  protected proposalExpired(expiresAt: string): boolean {
+    return !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= this.currentTime();
   }
 
   protected refreshData(): void {
     this.loadDashboard(true);
+    this.loadOwnerReadiness();
+    this.loadOwnerMarkets();
+  }
+
+  private loadOwnerReadiness(): void {
+    this.dashboardApi.ownerReadiness().subscribe({
+      next: (data) => this.ownerReadiness.set(data),
+      error: () => {
+        this.ownerReadiness.set(null);
+        this.dashboardApi.tradingStatus().subscribe({
+          next: (data) => this.tradingStatus.set(data),
+          error: () => this.tradingStatus.set(null),
+        });
+      },
+    });
+  }
+
+  private loadOwnerMarkets(): void {
+    this.dashboardApi.ownerMarkets().subscribe({
+      next: (data) => this.ownerMarkets.set(data),
+      error: () => {
+        this.ownerMarkets.set(null);
+        this.dashboardApi.modelReadiness().subscribe({
+          next: (data) => this.modelReadiness.set(data),
+          error: () => this.modelReadiness.set(null),
+        });
+      },
+    });
   }
 
   protected logout(): void {
@@ -541,12 +676,18 @@ export class DashboardComponent {
     const next = current === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     if (!window.confirm(`${next === 'ACTIVE' ? 'Enable' : 'Pause'} this demo strategy?`)) return;
     this.dashboardApi.changeStrategy(id, next, `Owner changed strategy status to ${next}`).subscribe({
-      next: () => this.loadTradingOperations(),
+      next: () => this.loadStrategies(),
       error: () => this.controlError.set('The strategy status change failed.'),
     });
   }
 
   protected decideProposal(proposalId: string, decision: 'APPROVE' | 'DECLINE'): void {
+    if (this.proposalBusy()) return;
+    const proposal = this.tradeProposals()?.proposals.find((item) => item.trade_proposal_id === proposalId);
+    if (!proposal || proposal.status !== 'PENDING_OWNER' || this.proposalExpired(proposal.expires_at_utc)) {
+      this.proposalMessage.set('This proposal has expired or is no longer awaiting a decision.');
+      return;
+    }
     const action = decision === 'APPROVE' ? 'approve this proposal for deterministic risk review' : 'decline this proposal';
     if (!window.confirm(`Do you want to ${action}? This action does not submit an IG order.`)) return;
     this.proposalBusy.set(proposalId);
@@ -613,6 +754,16 @@ export class DashboardComponent {
     return Number.isFinite(score) ? `${(score * 100).toFixed(1)}%` : '—';
   }
 
+  protected modelBlockerLabel(reason: string): string {
+    const labels: Record<string, string> = {
+      NO_DEVELOPMENT_PASSED_MODEL: 'Research required: no model has passed development gates',
+      NO_HOLDOUT_PASSED_MODEL: 'Validation required: no frozen model has passed holdout',
+      OWNER_MODEL_APPROVAL_REQUIRED: 'Owner action required: approve the holdout-passed model',
+      NO_COMBINED_EDGE: 'Waiting for a model and macro-aligned signal',
+    };
+    return labels[reason] ?? reason.replaceAll('_', ' ').toLowerCase();
+  }
+
   protected sourceMoney(value: string, currency: string): string {
     return new Intl.NumberFormat('en-ZA', {
       style: 'currency',
@@ -651,8 +802,6 @@ export class DashboardComponent {
       next: (data) => {
         this.dashboardData.set(data);
         this.loading.set(false);
-        this.loadTradingReadiness();
-        this.loadTradingOperations();
       },
       error: () => {
         this.syncError.set(
@@ -666,6 +815,9 @@ export class DashboardComponent {
   }
 
   protected loadMarket(): void {
+    const key = `${this.selectedMarket()}:${this.selectedTimeframe()}:${this.selectedPeriod()}`;
+    if (this.marketLoading() && this.lastMarketRequestKey === key) return;
+    this.lastMarketRequestKey = key;
     this.marketRequests.next({
       symbol: this.selectedMarket(), timeframe: this.selectedTimeframe(), period: this.selectedPeriod(),
     });
@@ -781,7 +933,7 @@ export class DashboardComponent {
         this.marketInventory.set(data);
         if (!data.markets.some((market) => market.symbol === this.selectedMarket()) && data.markets[0]) {
           this.selectedMarket.set(data.markets[0].symbol);
-          this.loadMarket();
+          if (this.marketDetail()) this.loadMarket();
         }
       },
       error: () => this.marketInventory.set(null),
@@ -800,6 +952,9 @@ export class DashboardComponent {
       next: (data) => this.tradingReadiness.set(data),
       error: () => this.tradingReadiness.set(null),
     });
+  }
+
+  private loadResearchEvidence(): void {
     this.dashboardApi.modelReadiness().subscribe({
       next: (data) => this.modelReadiness.set(data),
       error: () => this.modelReadiness.set(null),
@@ -815,6 +970,9 @@ export class DashboardComponent {
     });
     this.loadReplayRuns();
     this.loadMacroStatus();
+  }
+
+  private loadShadowEvidence(): void {
     this.dashboardApi.shadowTrades().subscribe({
       next: (data) => this.shadowTrades.set(data),
       error: () => this.shadowTrades.set({ count: 0, environment: 'SHADOW', trades: [] }),
@@ -835,22 +993,27 @@ export class DashboardComponent {
       next: (data) => this.tradeProposals.set(data),
       error: () => this.tradeProposals.set({ status: 'OWNER_REVIEW', execution_authority: 'NONE', count: 0, proposals: [] }),
     });
-    this.dashboardApi.tradeProposals().subscribe({
-      next: (data) => this.tradeProposals.set(data),
-      error: () => this.tradeProposals.set({ status: 'OWNER_REVIEW', execution_authority: 'NONE', count: 0, proposals: [] }),
+    this.dashboardApi.tradingStatus().subscribe({
+      next: (data) => this.tradingStatus.set(data), error: () => this.tradingStatus.set(null),
     });
+  }
+
+  private loadRiskEvidence(): void {
     this.dashboardApi.riskStatus().subscribe({
       next: (data) => this.riskStatus.set(data), error: () => this.riskStatus.set(null),
     });
+  }
+
+  private loadSystemEvidence(): void {
     this.dashboardApi.reconciliation().subscribe({
       next: (data) => this.reconciliation.set(data), error: () => this.reconciliation.set(null),
     });
     this.dashboardApi.operationsStatus().subscribe({
       next: (data) => this.operationsStatus.set(data), error: () => this.operationsStatus.set(null),
     });
-    this.dashboardApi.tradingStatus().subscribe({
-      next: (data) => this.tradingStatus.set(data), error: () => this.tradingStatus.set(null),
-    });
+  }
+
+  private loadStrategies(): void {
     this.dashboardApi.strategies().subscribe({
       next: (data) => this.strategies.set(data), error: () => this.strategies.set({ strategies: [] }),
     });
@@ -929,17 +1092,17 @@ export class DashboardComponent {
     const timeTicks = Array.from({ length: tickCount }, (_, tickIndex) => {
       const visibleIndex = tickCount === 1 ? 0 : Math.round((tickIndex * (visible.length - 1)) / (tickCount - 1));
       const sourceIndex = window.start + visibleIndex;
-      const stamp = new Date(source[sourceIndex].open_time_sast + '+02:00');
+      const stamp = new Date(source[sourceIndex].open_time_utc);
       const includeDate = this.selectedPeriod() !== 'TODAY';
       return {
         x: left + step * visibleIndex + step / 2,
         label: stamp.toLocaleString('en-ZA', includeDate
-          ? { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }
-          : { hour: '2-digit', minute: '2-digit' }),
+          ? { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Johannesburg' }
+          : { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Johannesburg' }),
       };
     });
     return { candles, minLabel: min.toFixed(digits), maxLabel: max.toFixed(digits),
-      latestLabel: new Date(source[source.length - 1].open_time_sast + '+02:00').toLocaleString('en-ZA', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' }),
+      latestLabel: new Date(source[source.length - 1].open_time_utc).toLocaleString('en-ZA', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short', timeZone: 'Africa/Johannesburg' }),
       latestPrice: latestClose.toFixed(digits), change: `${changePct >= 0 ? '+' : ''}${changePct.toFixed(3)}%`, positive: changePct >= 0,
       openPrice: firstOpen.toFixed(digits), highPrice: periodHigh.toFixed(digits), lowPrice: periodLow.toFixed(digits), priceTicks, timeTicks,
       chartWidth: width, chartHeight: height, minValue: min, maxValue: max, priceDigits: digits,

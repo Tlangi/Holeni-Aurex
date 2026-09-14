@@ -7,11 +7,12 @@ from threading import Event
 
 from app.config import Settings
 from app.dukascopy_tick_import import import_dukascopy_ticks
-from app.email_delivery import send_email
+from app.email_delivery import aurex_email_html, send_email
 from app.historical_backfill import (claim_completion_notification, claim_next, download_partition,
                                      claim_progress_notification, record_completion_notification, recover_stale_claims,
-                                     reconcile_recent_campaign, resource_gate, update_job)
-from app.historical_validation import validate_partition
+                                     reconcile_recent_campaign, requeue_legacy_validation_failures,
+                                     resource_gate, update_job)
+from app.historical_validation import validate_partition, validation_failure_detail
 from app.m1_m5_reconciliation import reconcile_batch_to_accepted_m5
 from app.timeframe_fallback import persist_batch_cross_timeframe_recovery
 
@@ -28,6 +29,10 @@ class HistoricalBackfillWorker:
         recovered=recover_stale_claims(self.settings)
         if recovered:
             logger.warning("recovered stale historical jobs",extra={"operation":"backfill.recovery","result":recovered})
+        requeued = requeue_legacy_validation_failures(self.settings)
+        if requeued:
+            logger.warning("requeued legacy validation failures", extra={
+                "operation": "backfill.validation_upgrade", "result": requeued})
         if self.settings.historical_backfill_enabled:
             campaign = reconcile_recent_campaign(self.settings)
             logger.info("recent historical campaign reconciled", extra={
@@ -54,7 +59,7 @@ class HistoricalBackfillWorker:
                     self.settings, str(result["import_batch_id"]),
                 )
                 if validation["status"] != "VALIDATED":
-                    raise RuntimeError("PARTITION_VALIDATION_FAILED")
+                    raise RuntimeError(validation_failure_detail(validation))
                 recovery = persist_batch_cross_timeframe_recovery(
                     self.settings, str(result["import_batch_id"]),
                 )
@@ -91,7 +96,13 @@ class HistoricalBackfillWorker:
         failed=int(summary["failed"]); outcome="completed successfully" if not failed else f"completed with {failed} failed partition(s)"
         try:
             send_email(self.settings,recipient=recipient,subject="Aurex historical backfill finished",
-                       plain_text=f"The Aurex historical backfill {outcome}. Completed: {summary['complete']} of {summary['total']}. Research eligibility still requires the independent validation gates shown in Aurex Research.")
+                       plain_text=f"The Aurex historical backfill {outcome}. Completed: {summary['complete']} of {summary['total']}. Research eligibility still requires the independent validation gates shown in Aurex Research.",
+                       html=aurex_email_html(title="Historical backfill finished",
+                         eyebrow="Data collection", summary=f"The backfill {outcome}.",
+                         details=[("Completed", f"{summary['complete']} of {summary['total']}"),
+                                  ("Failed", str(failed)), ("Research eligible", "Independent validation required")],
+                         action_label="Review data evidence", action_url="https://holeniaurex.co.za/research",
+                         severity="SUCCESS" if not failed else "WARNING"))
             record_completion_notification(self.settings,str(summary["notification_key"]),sent=True)
         except Exception as exc:
             # Notification delivery must never turn a successfully imported partition into a retry.
@@ -112,12 +123,26 @@ class HistoricalBackfillWorker:
                  else "Aurex historical backfill progress")
         detail=(f"{failed} partition(s) require attention." if failed else
                 "No terminal partition failures are currently recorded.")
+        reasons = list(summary.get("failure_reasons") or [])
+        reason_text = "; ".join(
+            f"{item['count']}x {item['reason']}" for item in reasons
+        ) or "None"
         try:
             send_email(self.settings,recipient=recipient,subject=subject,
                        plain_text=(f"Historical import progress: {summary['percent']}% "
                                    f"({summary['terminal']} of {summary['total']} terminal). "
                                    f"Completed: {summary['complete']}; failed: {failed}. {detail} "
-                                   "Downloaded does not mean research eligible; validation remains independent."))
+                                   f"Top validation evidence: {reason_text}. "
+                                   "Downloaded does not mean research eligible; validation remains independent."),
+                       html=aurex_email_html(title="Historical data progress",
+                         eyebrow="Backfill update", summary=detail,
+                         details=[("Progress", f"{summary['percent']}%"),
+                                  ("Terminal", f"{summary['terminal']} of {summary['total']}"),
+                                  ("Completed", str(summary['complete'])), ("Failed", str(failed)),
+                                  ("Top failure evidence", reason_text),
+                                  ("Research eligible", "Not implied by download")],
+                         action_label="Open Research", action_url="https://holeniaurex.co.za/research",
+                         severity="WARNING" if failed else "INFO"))
             record_completion_notification(self.settings,str(summary["notification_key"]),sent=True)
         except Exception as exc:
             record_completion_notification(self.settings,str(summary["notification_key"]),sent=False,

@@ -140,7 +140,11 @@ def _provider_family(source: object) -> str:
     value = str(source or "UNKNOWN").upper()
     if value.startswith("DUKASCOPY"):
         return "DUKASCOPY"
-    if value.startswith("IG"):
+    # DERIVED_M1 contains only complete, genuine IG M1 buckets.  It is an IG
+    # canonical derivative, not an independent provider timeline.  Treating it
+    # separately double-counted gaps whenever direct IG and M1-derived candles
+    # alternated.
+    if value.startswith("IG") or value == "DERIVED_M1":
         return "IG"
     return value
 
@@ -185,6 +189,7 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
         invalid = nonpositive = future = partial = missing = recent_missing = observed_regular = 0
         recent_cutoff = now - timedelta(hours=24)
         provider_rows: dict[str, list[dict[str, object]]] = {}
+        source_provenance: dict[str, int] = {}
         for row in rows:
             values = [Decimal(str(row[name])) for name in ("open", "high", "low", "close")]
             invalid += int(values[1] < max(values[0], values[3]) or values[2] > min(values[0], values[3]))
@@ -200,6 +205,8 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
             ):
                 observed_regular += 1
                 provider_rows.setdefault(_provider_family(row["source"]), []).append(row)
+                source = str(row["source"] or "UNKNOWN")
+                source_provenance[source] = source_provenance.get(source, 0) + 1
 
         provider_diagnostics: dict[str, dict[str, object]] = {}
         for provider, segment in provider_rows.items():
@@ -265,6 +272,8 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
                          "features_segmented_at_gaps": True,
                          "provider_boundaries_excluded_from_status": True,
                          "historical_quality_authority": "app.data_quality_segments",
+                         "canonical_timestamp_deduplication": True,
+                         "source_provenance_counts": source_provenance,
                          "provider_diagnostics": provider_diagnostics})),
         )
         connection.commit()

@@ -462,6 +462,16 @@ def create_experimental_programme(
             "execution_authority": False, "provenance": "EXPERIMENTAL IG DEMO"}
 
 
+def effective_programme_status(status: str, expires_at_utc: datetime,
+                               *, now_utc: datetime | None = None) -> str:
+    """Owner-visible lifecycle without mutating historical status/audit evidence."""
+    expiry = expires_at_utc.replace(tzinfo=timezone.utc) if expires_at_utc.tzinfo is None else expires_at_utc.astimezone(timezone.utc)
+    now = now_utc or datetime.now(timezone.utc)
+    if status in {"DRAFT", "BLOCKED", "ARMED", "RUNNING", "PAUSED"} and expiry <= now:
+        return "EXPIRED"
+    return status
+
+
 def control_experimental_programme(
     settings: Settings, user: AuthenticatedUser, programme_id: str,
     body: ExperimentalControlRequest, *, correlation_id: str | None = None,
@@ -486,6 +496,10 @@ def control_experimental_programme(
         if not row:
             raise LookupError("Experimental programme not found")
         current = str(row["status"])
+        if body.action in {"ARM", "RESUME"} and effective_programme_status(
+            current, row["expires_at_utc"]
+        ) == "EXPIRED":
+            raise ExperimentalDemoBlocked("EXPERIMENT_EXPIRED")
         if body.action == "ARM":
             if body.acknowledgement != ARM_ACKNOWLEDGEMENT:
                 raise ExperimentalDemoBlocked("ARMING_ACKNOWLEDGEMENT_REQUIRED")
@@ -1099,6 +1113,11 @@ def read_experimental_lab(settings: Settings, user: AuthenticatedUser, limit: in
                WHERE p.tenant_id=%s ORDER BY p.created_at_utc DESC""", (user.tenant_id,),
         )
         programmes = cursor.fetchall()
+        for programme in programmes:
+            programme["stored_status"] = programme["status"]
+            programme["status"] = effective_programme_status(
+                str(programme["status"]), programme["expires_at_utc"]
+            )
         cursor.execute(
             """SELECT TOP(%s) a.experimental_attempt_id,a.experimental_programme_id,a.signal_timestamp_utc,
                       a.decision_side,a.model_probability,a.decision_state,a.reason_code,a.requested_size,

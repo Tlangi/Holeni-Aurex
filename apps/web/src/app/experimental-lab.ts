@@ -1,8 +1,15 @@
 import { KeyValuePipe } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { finalize } from 'rxjs';
 import { DashboardApi, ExperimentalLabData } from './dashboard-api';
+
+export function effectiveExperimentalStatus(status: string, expiry: string, now: number): string {
+  const expiresAt = Date.parse(expiry);
+  if (!Number.isFinite(expiresAt)) return 'UNVERIFIED';
+  return ['DRAFT', 'BLOCKED', 'ARMED', 'RUNNING', 'PAUSED'].includes(status) && expiresAt <= now
+    ? 'EXPIRED' : status;
+}
 
 @Component({
   selector: 'app-experimental-lab',
@@ -13,13 +20,21 @@ import { DashboardApi, ExperimentalLabData } from './dashboard-api';
 })
 export class ExperimentalLabComponent implements OnInit {
   private readonly api = inject(DashboardApi);
+  private readonly destroyRef = inject(DestroyRef);
+  protected readonly currentTime = signal(Date.now());
   protected readonly data = signal<ExperimentalLabData | null>(null);
   protected readonly busy = signal('');
   protected readonly message = signal('');
   protected readonly selectedCandidate = signal('');
 
   ngOnInit(): void {
+    const timer = setInterval(() => this.currentTime.set(Date.now()), 30_000);
+    this.destroyRef.onDestroy(() => clearInterval(timer));
     this.load();
+  }
+
+  protected effectiveProgrammeStatus(programme: ExperimentalLabData['programmes'][number]): string {
+    return effectiveExperimentalStatus(programme.status, programme.expires_at_utc, this.currentTime());
   }
 
   protected load(): void {
@@ -80,6 +95,14 @@ export class ExperimentalLabComponent implements OnInit {
     programmeId: string,
     action: 'ARM' | 'PAUSE' | 'RESUME' | 'KILL' | 'COMPLETE',
   ): void {
+    const programme = this.data()?.programmes.find((item) => item.experimental_programme_id === programmeId);
+    const expiresAt = programme ? Date.parse(programme.expires_at_utc) : NaN;
+    if (!programme || (['ARM', 'RESUME'].includes(action) &&
+        (!Number.isFinite(expiresAt) || expiresAt <= Date.now()))) {
+      this.message.set('Programme expired or unavailable. No control action was sent.');
+      this.currentTime.set(Date.now());
+      return;
+    }
     const ack =
       action === 'ARM'
         ? 'ARM_EXPERIMENTAL_IG_DEMO_EVIDENCE_PROGRAMME'

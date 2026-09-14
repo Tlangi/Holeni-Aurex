@@ -3,7 +3,10 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pandas as pd
 
-from app.model_pipeline import _market_frame, add_features, chronological_evaluate, trading_metrics
+from app.model_pipeline import (
+    _market_frame, add_features, chronological_evaluate, trading_metrics,
+    scheduled_retrain_reason, training_dataset_identity,
+)
 
 
 def test_chronological_evaluation_never_leaks_validation_into_training() -> None:
@@ -100,3 +103,36 @@ def test_market_frame_supports_dictionary_database_cursors() -> None:
     frame = _market_frame(Cursor(), "market-id")
     assert not frame.index.isna().any()
     assert frame.iloc[0]["provider"] == "DUKASCOPY_BID_M15"
+
+
+def test_training_dataset_identity_changes_for_old_backfill_rows() -> None:
+    index = pd.date_range("2026-01-05T08:00:00Z", periods=3, freq="15min")
+    frame = pd.DataFrame({"open": [1.0, 1.1, 1.2], "high": [1.1, 1.2, 1.3],
+                          "low": [0.9, 1.0, 1.1], "close": [1.05, 1.15, 1.25],
+                          "tick_volume": [10, 11, 12], "provider": ["IG"] * 3}, index=index)
+    original = training_dataset_identity(frame)
+    repaired = frame.copy()
+    repaired.loc[index[0], "close"] = 1.06
+    assert training_dataset_identity(repaired) != original
+
+
+def test_scheduled_retrain_distinguishes_small_append_from_historical_repair() -> None:
+    index = pd.date_range("2026-01-05T08:00:00Z", periods=120, freq="15min")
+    frame = pd.DataFrame({
+        "open": np.arange(120), "high": np.arange(120) + 1,
+        "low": np.arange(120) - 1, "close": np.arange(120) + 0.5,
+        "tick_volume": np.full(120, 10), "provider": ["IG"] * 120,
+    }, index=index)
+    prior = frame.iloc[:100]
+    train, reason, new_rows = scheduled_retrain_reason(
+        frame, prior_sha256=training_dataset_identity(prior), prior_rows=100,
+        prior_end=prior.index[-1].to_pydatetime(), minimum_new_rows=96,
+    )
+    assert not train and reason == "INSUFFICIENT_NEW_M15_DATA" and new_rows == 20
+    repaired = prior.copy()
+    repaired.iloc[0, repaired.columns.get_loc("close")] += 0.25
+    train, reason, _ = scheduled_retrain_reason(
+        repaired, prior_sha256=training_dataset_identity(prior), prior_rows=100,
+        prior_end=prior.index[-1].to_pydatetime(), minimum_new_rows=96,
+    )
+    assert train and reason == "HISTORICAL_DATASET_CHANGED"

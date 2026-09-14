@@ -61,12 +61,24 @@ def test_losses_can_only_reduce_or_block_new_trade_risk() -> None:
     assert after_four.reason == "CONSECUTIVE_LOSS_LIMIT"
 
 
-def test_profit_protection_reduces_risk_and_daily_lock_blocks_entries() -> None:
+def test_profit_protection_reduces_risk_but_daily_gain_never_blocks_entries() -> None:
     normal = evaluate_risk(valid_input())
     protected = evaluate_risk(replace(valid_input(), profit_protection_state="PROFIT_PROTECTION"))
     locked = evaluate_risk(replace(valid_input(), profit_protection_state="DAILY_GAIN_LOCKED"))
     assert protected.planned_risk_zar < normal.planned_risk_zar
-    assert locked.reason == "DAILY_PROFIT_LOCK"
+    assert locked.approved
+    assert locked.planned_risk_zar == normal.planned_risk_zar
+
+
+def test_daily_profit_outcomes_never_force_or_block_a_trade() -> None:
+    below_two = evaluate_risk(replace(valid_input(), equity_zar=Decimal("100500")))
+    above_two = evaluate_risk(replace(valid_input(), equity_zar=Decimal("102500")))
+    no_opportunity = evaluate_risk(replace(valid_input(), direction="HOLD"))
+    controlled_loss = evaluate_risk(replace(valid_input(), equity_zar=Decimal("99500")))
+    assert below_two.approved
+    assert above_two.approved
+    assert no_opportunity.reason == "NO_TRADE_SIGNAL"
+    assert controlled_loss.approved
 
 
 def test_non_current_ledger_portfolio_limit_trade_limit_and_margin_fail_closed() -> None:

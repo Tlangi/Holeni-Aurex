@@ -4,7 +4,7 @@ import hashlib
 import math
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -14,6 +14,7 @@ import pandas as pd
 
 from app.config import Settings
 from app.database import open_database
+from app.model_governance_status import MODEL_GOVERNANCE_STAGE_SQL, model_governance_blocker
 from app.model_pipeline import (FEATURES, _market_frame, add_features, feature_vector_hash,
                                 inference_feature_vector)
 from app.order_lifecycle import record_created_intent, transition_intent
@@ -25,6 +26,8 @@ from app.research_protocol import (
     apply_ensemble_disagreement,
     selective_directions_from_edges,
 )
+from app.trade_proposals import (PROPOSAL_APPROVAL_WINDOW_SECONDS, TradeProposalCreate,
+                                 create_trade_proposal, notify_trade_proposal)
 
 
 @dataclass(frozen=True)
@@ -88,8 +91,6 @@ def evaluate_risk(item: RiskInput) -> RiskResult:
         drawdown = (item.start_day_equity_zar - item.equity_zar) / item.start_day_equity_zar * 100
         if drawdown >= item.daily_loss_limit_pct:
             return RiskResult(False, "DAILY_LOSS_LIMIT")
-    if item.profit_protection_state in {"DAILY_GAIN_LOCKED", "DAILY_TARGET_LOCKED"}:
-        return RiskResult(False, "DAILY_PROFIT_LOCK")
     if item.consecutive_losses >= 4:
         return RiskResult(False, "CONSECUTIVE_LOSS_LIMIT")
     if item.open_positions >= item.max_open_positions:
@@ -110,8 +111,9 @@ def evaluate_risk(item: RiskInput) -> RiskResult:
     stop_distance = max(item.atr * Decimal("1.5"), item.min_stop_distance)
     if stop_distance <= 0 or item.current_price <= 0:
         return RiskResult(False, "INVALID_STOP_DISTANCE")
-    # Profit objectives never appear in this calculation. Losses and profit
-    # protection may only preserve or reduce risk, never increase it.
+    # Profit objectives never appear in this calculation. Losses and optional
+    # strong-day capital protection may only reduce risk, never increase it or
+    # block a new independent qualified opportunity.
     risk_multiplier = Decimal("1")
     if item.consecutive_losses >= 3:
         risk_multiplier = Decimal("0.4")
@@ -155,7 +157,9 @@ def _artifact(path: str, digest: str) -> dict[str, object]:
     return bundle
 
 
-def _signal(frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: float) -> tuple[str, Decimal, Decimal]:
+def _signal_tradeability(
+    frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: float,
+) -> tuple[str, Decimal, Decimal, dict[str, object]]:
     if str(bundle.get("research_protocol_version") or "") == PROTOCOL_VERSION:
         payload = dict(bundle.get("target_specification") or {})
         symbol = str(payload.get("symbol") or "")
@@ -177,7 +181,7 @@ def _signal(frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: fl
         model = bundle["model"]
         probabilities = model.predict_proba(row[FEATURES])
         edges = dict(bundle.get("edge_parameters") or {})
-        directions, _ = selective_directions_from_edges(
+        directions, explanations = selective_directions_from_edges(
             probabilities, model.classes_, row, specification,
             buy_move_bps=float(edges["buy_move_bps"]),
             sell_move_bps=float(edges["sell_move_bps"]),
@@ -187,14 +191,22 @@ def _signal(frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: fl
         class_value = 1 if direction == "BUY" else 2 if direction == "SELL" else 0
         lookup = {int(value): index for index, value in enumerate(model.classes_)}
         confidence = float(probabilities[0, lookup[class_value]]) if class_value in lookup else 0.0
-        return direction, Decimal(str(confidence)), Decimal(str(row.iloc[0]["atr"]))
+        return direction, Decimal(str(confidence)), Decimal(str(row.iloc[0]["atr"])), explanations[0]
     row = inference_feature_vector(frame, horizon=int(bundle.get("horizon") or 4))
     probability = float(bundle["model"].predict_proba(row.to_frame().T)[0, 1])
     if not math.isfinite(probability):
         raise ValueError("NON_FINITE_MODEL_OUTPUT")
     direction = "BUY" if probability >= buy else "SELL" if probability <= sell else "HOLD"
     confidence = probability if direction != "SELL" else 1 - probability
-    return direction, Decimal(str(confidence)), Decimal(str(row["atr"]))
+    return direction, Decimal(str(confidence)), Decimal(str(row["atr"])), {
+        "statistical_edge": "UNPROVEN", "economic_edge": "UNPROVEN",
+        "execution_edge": "UNPROVEN", "reason": "LEGACY_EDGE_EVIDENCE_UNAVAILABLE",
+    }
+
+
+def _signal(frame: pd.DataFrame, bundle: dict[str, object], buy: float, sell: float) -> tuple[str, Decimal, Decimal]:
+    direction, confidence, atr, _ = _signal_tradeability(frame, bundle, buy, sell)
+    return direction, confidence, atr
 
 
 def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, object]]:
@@ -224,17 +236,29 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                JOIN app.model_versions mv ON mv.market_id=m.market_id
                JOIN app.strategy_versions sv ON sv.strategy_version_id=mv.strategy_version_id
                JOIN app.strategies s ON s.strategy_id=sv.strategy_id
+               JOIN app.holdout_candidates hc ON hc.holdout_candidate_id=mv.holdout_candidate_id
                WHERE m.enabled=1 AND m.signal_enabled=1 AND m.demo_trading_enabled=1
-                 AND mv.status IN ('VALIDATED','REGISTERED')
+                 AND mv.status='VALIDATED' AND hc.status='OWNER_APPROVED'
+                 AND mv.artifact_sha256=hc.artifact_sha256
                  AND s.tenant_id=%s AND s.status='ACTIVE' AND s.environment='DEMO'
                  AND mv.registered_at_utc=(SELECT MAX(x.registered_at_utc) FROM app.model_versions x
                                           WHERE x.market_id=m.market_id
                                             AND x.strategy_version_id=mv.strategy_version_id
-                                            AND x.status IN ('VALIDATED','REGISTERED'))
+                                            AND x.status='VALIDATED')
                ORDER BY m.symbol""",
             (tenant_id,),
         )
         models = cursor.fetchall()
+        governed_market_ids = {str(model["market_id"]) for model in models}
+        cursor.execute(
+            f"""SELECT market_id,symbol,{MODEL_GOVERNANCE_STAGE_SQL} FROM app.markets m
+               WHERE enabled=1 AND signal_enabled=1 AND demo_trading_enabled=1
+               ORDER BY symbol"""
+        )
+        for market in cursor.fetchall():
+            if str(market["market_id"]) not in governed_market_ids:
+                outcomes.append({"symbol": str(market["symbol"]), "result": "BLOCKED",
+                                 "reason": model_governance_blocker(market)})
         for model in models:
             symbol, market_id = str(model["symbol"]), str(model["market_id"])
             frame = _market_frame(cursor, market_id)
@@ -265,7 +289,7 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                 continue
             try:
                 bundle = _artifact(str(model["artifact_path"]), str(model["artifact_sha256"]))
-                model_direction, _, atr = _signal(
+                model_direction, _, atr, tradeability = _signal_tradeability(
                     frame, bundle,
                     float(model["buy_threshold"]), float(model["sell_threshold"]),
                 )
@@ -367,9 +391,41 @@ def run_shadow_cycle(settings: Settings, tenant_id: str) -> list[dict[str, objec
                     model_freeze_timestamp=freeze_time,
                 )
             connection.commit()
+            proposal_id: str | None = None
+            if result["risk"].approved:
+                decision_time = datetime.now(timezone.utc)
+                cutoff = min(decision_time, signal_time + timedelta(minutes=15))
+                horizon_bars = int((bundle.get("target_specification") or {}).get(
+                    "horizon_bars", bundle.get("horizon") or 4,
+                ))
+                try:
+                    proposal_id = create_trade_proposal(settings, tenant_id, TradeProposalCreate(
+                        market=symbol, model_version_id=str(model["model_version_id"]),
+                        direction=direction, confidence=confidence,
+                        proposed_size=result["risk"].size, entry_price=shadow_entry,
+                        stop_price=result["risk"].stop, target_price=result["risk"].take_profit,
+                        risk_zar=result["risk"].planned_risk_zar,
+                        horizon_minutes=max(1, min(10080, horizon_bars * 15)),
+                        decision_time_utc=decision_time, data_cutoff_utc=cutoff,
+                        expires_at_utc=decision_time + timedelta(seconds=PROPOSAL_APPROVAL_WINDOW_SECONDS),
+                        rationale_summary=(
+                            "Validated Aurex model and macro direction agree; canonical data, "
+                            "broker sizing and deterministic shadow risk checks passed."
+                        ),
+                        evidence={"signal_id": signal_id, "candle_id": int(candle["candle_id"]),
+                                  "risk_reason": result["risk"].reason,
+                                  "risk_acceptable": "PASS" if result["risk"].approved else "FAIL",
+                                  "tradeability": tradeability,
+                                  "research_protocol_version": str(bundle.get("research_protocol_version") or "LEGACY")},
+                        input_snapshot_sha256=vector_hash,
+                    ))
+                    notify_trade_proposal(settings, tenant_id, proposal_id)
+                except ValueError as exc:
+                    if str(exc) != "PROPOSAL_PROVENANCE_NOT_ELIGIBLE":
+                        raise
             outcomes.append({"symbol": symbol, "result": "WOULD_SUBMIT" if result["risk"].approved else "REJECTED",
                              "reason": result["risk"].reason, "direction": direction,
-                             "confidence": float(confidence)})
+                             "confidence": float(confidence), "trade_proposal_id": proposal_id})
     return outcomes
 
 

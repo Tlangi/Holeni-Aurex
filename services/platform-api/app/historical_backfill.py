@@ -164,6 +164,23 @@ def recover_stale_claims(settings: Settings, *, stale_after_minutes: int = 180) 
     return recovered
 
 
+def requeue_legacy_validation_failures(settings: Settings) -> int:
+    """Requeue only failures produced by the superseded batch-local validator."""
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """UPDATE app.historical_backfill_jobs
+               SET status='RETRY_PENDING',attempt_count=0,next_attempt_at_utc=SYSUTCDATETIME(),
+                   last_error_code='REQUEUED_VALIDATION_V3',
+                   last_error_detail='Requeued after canonical-timeline validator deployment',
+                   claimed_at_utc=NULL,completed_at_utc=NULL,updated_at_utc=SYSUTCDATETIME()
+               WHERE status='FAILED' AND last_error_detail='PARTITION_VALIDATION_FAILED'"""
+        )
+        changed = int(cursor.rowcount or 0)
+        connection.commit()
+    return changed
+
+
 def resource_gate(settings: Settings, work_root: Path) -> tuple[bool, str]:
     free_gb = shutil.disk_usage(work_root).free / (1024**3)
     if free_gb < settings.historical_backfill_min_free_gb:
@@ -195,7 +212,7 @@ def update_job(settings: Settings, job_id: str, status: str, *, error_code: str 
         connection.commit()
 
 
-def queue_summary(settings: Settings) -> dict[str, int | bool]:
+def queue_summary(settings: Settings) -> dict[str, object]:
     start,end=recent_month_boundaries(datetime.now(timezone.utc),settings.historical_backfill_recent_months)
     with open_database(settings) as connection:
         cursor=connection.cursor(as_dict=True)
@@ -205,9 +222,22 @@ def queue_summary(settings: Settings) -> dict[str, int | bool]:
         counts={str(row["status"]):int(row["item_count"]) for row in cursor.fetchall()}
         cursor.execute("SELECT COUNT(*) item_count FROM app.historical_backfill_jobs WHERE status='SUPERSEDED'")
         superseded=int(cursor.fetchone()["item_count"])
+        cursor.execute(
+            """SELECT TOP (3) COALESCE(last_error_detail,last_error_code,'UNKNOWN') reason,
+                      COUNT(*) item_count
+               FROM app.historical_backfill_jobs
+               WHERE partition_end_utc>%s AND partition_start_utc<%s AND status='FAILED'
+               GROUP BY COALESCE(last_error_detail,last_error_code,'UNKNOWN')
+               ORDER BY COUNT(*) DESC""", (start, end),
+        )
+        failure_reasons = [
+            {"reason": str(row["reason"]), "count": int(row["item_count"])}
+            for row in cursor.fetchall()
+        ]
     total=sum(counts.values()); complete=counts.get("COMPLETE",0); failed=counts.get("FAILED",0)
     return {"total":total,"complete":complete,"failed":failed,
-            "superseded":superseded,"done":bool(total and complete+failed==total)}
+            "superseded":superseded,"done":bool(total and complete+failed==total),
+            "failure_reasons": failure_reasons}
 
 
 def claim_progress_notification(settings: Settings) -> dict[str, object] | None:

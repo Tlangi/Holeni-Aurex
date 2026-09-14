@@ -5,7 +5,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.trade_proposals import ProposalDecision, TradeProposalCreate
+from app.trade_proposals import (PROPOSAL_APPROVAL_WINDOW_SECONDS, ProposalDecision,
+                                 TradeProposalCreate)
 
 
 def valid_proposal(**changes: object) -> dict[str, object]:
@@ -17,7 +18,7 @@ def valid_proposal(**changes: object) -> dict[str, object]:
         "target_price": Decimal("147.55"), "risk_zar": Decimal("25"),
         "horizon_minutes": 60, "decision_time_utc": now,
         "data_cutoff_utc": now - timedelta(minutes=1),
-        "expires_at_utc": now + timedelta(minutes=15),
+        "expires_at_utc": now + timedelta(seconds=120),
         "rationale_summary": "Qualified model signal with local research agreement.",
         "evidence": {"model_gate": "PASS", "risk_authority": "AUREX"},
         "input_snapshot_sha256": "a" * 64,
@@ -30,6 +31,16 @@ def test_proposal_requires_protective_levels() -> None:
     TradeProposalCreate.model_validate(valid_proposal())
     with pytest.raises(ValidationError, match="protective stop"):
         TradeProposalCreate.model_validate(valid_proposal(stop_price=Decimal("147.40")))
+
+
+def test_proposal_approval_window_is_bounded() -> None:
+    now = valid_proposal()["decision_time_utc"]
+    assert TradeProposalCreate.model_validate(valid_proposal(
+        expires_at_utc=now + timedelta(seconds=PROPOSAL_APPROVAL_WINDOW_SECONDS)
+    )).expires_at_utc == now + timedelta(seconds=PROPOSAL_APPROVAL_WINDOW_SECONDS)
+    with pytest.raises(ValidationError, match="approval window"):
+        TradeProposalCreate.model_validate(valid_proposal(expires_at_utc=datetime(
+            2026, 9, 9, 9, 5, 1, tzinfo=timezone.utc)))
 
 
 def test_approval_is_only_for_risk_review() -> None:

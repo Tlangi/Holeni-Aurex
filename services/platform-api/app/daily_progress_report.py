@@ -96,9 +96,47 @@ def _collect_database_summary(settings: Settings, tenant_id: str) -> dict[str, o
                FROM ranked WHERE evidence_rank=1 ORDER BY symbol""", (tenant_id,),
         )
         forward = cursor.fetchall()
+        cursor.execute(
+            """WITH execution_ranked AS (
+                   SELECT e.*,ROW_NUMBER() OVER(PARTITION BY e.market_id ORDER BY e.evaluated_at_utc DESC) rn
+                   FROM app.execution_quality_snapshots e
+               ), quality_ranked AS (
+                   SELECT q.*,ROW_NUMBER() OVER(PARTITION BY q.market_id ORDER BY q.evaluated_at_utc DESC) rn
+                   FROM app.market_data_quality_runs q WHERE q.timeframe='M15'
+               )
+               SELECT m.symbol,e.m5_fresh,e.m15_fresh,e.bid_fresh,e.ask_fresh,e.spread_fresh,
+                      e.recent_unexpected_gap_count,e.recent_ig_continuity,
+                      e.cross_provider_continuity,e.overall_execution_quality,e.reasons_json,
+                      q.status historical_status,q.details_json historical_details_json
+               FROM app.markets m
+               LEFT JOIN execution_ranked e ON e.market_id=m.market_id AND e.rn=1
+               LEFT JOIN quality_ranked q ON q.market_id=m.market_id AND q.rn=1
+               WHERE m.enabled=1 ORDER BY m.symbol"""
+        )
+        quality = cursor.fetchall()
     return {
         "collection": collection, "shadow": shadow, "intents": intents,
-        "engine": engine, "demo": demo, "forward": forward,
+        "engine": engine, "demo": demo, "forward": forward, "quality": quality,
+    }
+
+
+def _quality_projection(row: dict[str, object]) -> dict[str, object]:
+    reasons = json.loads(str(row.get("reasons_json") or "{}"))
+    historical = json.loads(str(row.get("historical_details_json") or "{}"))
+    completeness = reasons.get("canonical_completeness")
+    if completeness is None:
+        completeness = historical.get("regular_session_completeness")
+    freshness = "PASS" if all(bool(row.get(name)) for name in (
+        "m5_fresh", "m15_fresh", "bid_fresh", "ask_fresh", "spread_fresh",
+    )) else "FAIL"
+    lineage = str(row.get("cross_provider_continuity") or "NOT_EVALUATED")
+    provenance = historical.get("source_provenance_counts") or {}
+    return {
+        "historical_completeness": round(float(completeness) * 100, 4) if completeness is not None else None,
+        "recent_consolidated_gaps": int(row.get("recent_unexpected_gap_count") or 0),
+        "current_freshness": freshness,
+        "lineage_warning": lineage,
+        "source_provenance": provenance,
     }
 
 
@@ -111,6 +149,9 @@ def build_daily_progress_report(
     database = _collect_database_summary(settings, tenant_id)
     validation_by_market = {item["market"]: item for item in validations["models"]}
     collection_by_market = {str(item["symbol"]): item for item in database["collection"]}
+    quality_by_market = {
+        str(item["symbol"]): _quality_projection(item) for item in database["quality"]
+    }
 
     markets: list[dict[str, object]] = []
     blockers: list[str] = []
@@ -119,6 +160,7 @@ def build_daily_progress_report(
         symbol = str(market["symbol"])
         validation = validation_by_market.get(symbol) or {}
         collection = collection_by_market.get(symbol) or {}
+        quality = quality_by_market.get(symbol) or {}
         market_blockers = list(market.get("blockers") or [])
         if market.get("model_status") != "VALIDATED":
             market_blockers.append("MODEL_NOT_VALIDATED")
@@ -141,6 +183,7 @@ def build_daily_progress_report(
             "model_status": market.get("model_status") or "NONE",
             "model_version": market.get("model_version"),
             "quality_status": market.get("quality_status") or "UNKNOWN",
+            **quality,
             "execution_mode": market.get("execution_mode") or "SHADOW",
             "auc": validation.get("auc"),
             "profit_factor": validation.get("profit_factor"),
@@ -205,6 +248,10 @@ def build_daily_progress_report(
         market_lines.append(
             f"- {item['symbol']}: features {item['feature_rows']:,}/{item['required_rows']:,}; "
             f"model {item['model_status']}; quality {item['quality_status']}; "
+            f"historical completeness {_display(item.get('historical_completeness'))}%; "
+            f"recent consolidated gaps {item.get('recent_consolidated_gaps', 0)}; "
+            f"freshness {_display(item.get('current_freshness'))}; "
+            f"lineage {_display(item.get('lineage_warning'))}; "
             f"M5 {item['m5_rows']:,}; M15 {item['m15_rows']:,}; "
             f"latest M5 UTC {_display(item['latest_m5_utc'])}; "
             f"AUC {_display(item['auc'])}; PF {_display(item['profit_factor'])}; "
@@ -231,7 +278,9 @@ def build_daily_progress_report(
         "<tr>" + "".join(
             f"<td>{html.escape(_display(value))}</td>" for value in (
                 item["symbol"], f"{item['feature_rows']:,}/{item['required_rows']:,}",
-                item["model_status"], item["quality_status"], f"{item['m5_rows']:,}",
+                item["model_status"], _display(item.get("historical_completeness")),
+                item.get("recent_consolidated_gaps", 0), _display(item.get("current_freshness")),
+                _display(item.get("lineage_warning")), f"{item['m5_rows']:,}",
                 f"{item['m15_rows']:,}", _display(item["auc"]), _display(item["profit_factor"]),
                 _display(item["expectancy"]),
             )
@@ -248,7 +297,7 @@ def build_daily_progress_report(
       <h1 style="margin-top:0">Progress report — {report_date_sast.isoformat()}</h1>
       <p>Training, trading and collection evidence as of {datetime.now(SAST).strftime('%d %b %Y %H:%M SAST')}.</p>
       <h2>Training and data collection</h2><div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr>{''.join(f'<th style="text-align:left;border-bottom:1px solid #ddd;padding:8px">{name}</th>' for name in ('Market','Features','Model','Quality','M5','M15','AUC','PF','Expectancy'))}</tr></thead>
+      <thead><tr>{''.join(f'<th style="text-align:left;border-bottom:1px solid #ddd;padding:8px">{name}</th>' for name in ('Market','Features','Model','Historical completeness %','Recent consolidated gaps','Current freshness','Lineage warning','M5','M15','AUC','PF','Expectancy'))}</tr></thead>
       <tbody>{rows}</tbody></table></div>
       <h2>Trading / shadow evidence</h2>
       <p>Engine <strong>{html.escape(_display(engine.get('mode')))}</strong>; new orders <strong>{'enabled' if engine.get('new_orders_enabled') else 'disabled'}</strong>. {html.escape(trading_sentence)}</p>

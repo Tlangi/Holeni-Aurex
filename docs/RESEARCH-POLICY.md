@@ -52,9 +52,10 @@ most 3%, no more than four consecutive losses and complete cost evidence.
 There is no daily profit target and no model or risk rule may create a trade to
 meet one. Daily and weekly returns are outcomes to measure, not quotas. A valid
 HOLD or no-trade day is expected when cost-aware edge is absent. Profit
-protection begins only after an observed gain: it reduces new-trade risk and can
-stop entries after excessive giveback, while loss, drawdown and reconciliation
-limits remain binding.
+Optional strong-day protection begins only after an observed gain and may reduce
+new-trade risk. It never stops an otherwise independent qualified opportunity.
+Loss, drawdown, exposure, data, execution and reconciliation limits remain
+binding.
 
 ## Selective research protocol V4
 

@@ -1,0 +1,38 @@
+{
+  "snapshot_kind": "READ_ONLY_EXISTING_RESERVED_DEVELOPMENT",
+  "source_commit": "98b5cef73b0e3a2ca615cfc44827bb75fd9b50fb",
+  "dirty_worktree": true,
+  "model_family": "NOT_ATTESTED",
+  "thresholds": "NOT_ATTESTED",
+  "holdout_consumed_by_snapshot": false,
+  "datasets": [
+    {
+      "market": "GBPUSD",
+      "research_lineage_id": "04ad20b1-d09f-417f-ab4f-9225b0767d36",
+      "dataset_sha256": "dd5304fbacf738bce02f2729be340d4310774e11d81dd5084a98f4de34ea351d",
+      "dataset_rows": 43012,
+      "development_start_utc": "2024-01-01T00:00:00Z",
+      "development_end_utc": "2025-10-06T01:30:00Z",
+      "holdout_start_utc": "2025-10-06T01:45:00Z",
+      "holdout_end_utc": "2026-09-03T17:30:00Z",
+      "provider_counts": {"DUKASCOPY_BID_M15": 43012},
+      "feature_version": "FEATURES_V1",
+      "lineage_label_version": "COST_VOLATILITY_TERNARY_V1",
+      "cost_model_version": "ig-spread-f451b18db992"
+    },
+    {
+      "market": "USDJPY",
+      "research_lineage_id": "779e131e-2784-433b-97c2-ae4fbde990db",
+      "dataset_sha256": "cb07eb338b555b9fc9f7039cf39fb24a0b6d82a2c9f1b7e85e24c78e42bb56e9",
+      "dataset_rows": 9984,
+      "development_start_utc": "2024-01-01T00:00:00Z",
+      "development_end_utc": "2024-05-28T14:45:00Z",
+      "holdout_start_utc": "2024-05-28T15:00:00Z",
+      "holdout_end_utc": "2026-09-10T16:00:00Z",
+      "provider_counts": {"DUKASCOPY_BID_M15": 9984},
+      "feature_version": "FEATURES_V1",
+      "lineage_label_version": "COST_VOLATILITY_TERNARY_V1",
+      "cost_model_version": "ig-spread-4eef469d36ff"
+    }
+  ]
+}

@@ -40,7 +40,7 @@
           <div class="row"><span>Historical data</span><strong>{{ market.feature_complete_rows >= market.required_rows ? 'SUFFICIENT' : 'ACCUMULATING' }}</strong></div>
           <div class="row"><span>Feature rows</span><strong>{{ market.feature_complete_rows | number }}</strong></div>
           <div class="row"><span>Historical quality</span><strong>{{ quality(market.symbol)?.historical_research_quality ?? '—' }}</strong></div>
-          <div class="row"><span>Recent IG continuity</span><strong>{{ quality(market.symbol)?.recent_ig_continuity ?? '—' }}</strong></div>
+          <div class="row"><span>Current IG continuity</span><strong>{{ quality(market.symbol)?.recent_ig_continuity ?? '—' }}</strong></div>
           <div class="row"><span>Provider boundary</span><strong>{{ quality(market.symbol)?.cross_provider_continuity ?? '—' }}</strong></div>
           <div class="row"><span>Execution quality</span><strong>{{ quality(market.symbol)?.overall_execution_quality ?? '—' }}</strong></div>
           <div class="row"><span>Cost model</span><strong>{{ cost(market.symbol)?.version ?? '—' }}</strong></div>

@@ -50,13 +50,16 @@ def reconcile_batch_to_accepted_m5(settings: Settings, import_batch_id: str) -> 
     with open_database(settings, query_timeout_seconds=120) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
-            """SELECT b.market_id,b.requested_start_utc,b.requested_end_utc,m.tick_size,
+            """SELECT b.market_id,b.vendor,b.requested_start_utc,b.requested_end_utc,m.tick_size,
                       MIN(c.source) m1_source,MIN(c.instrument_equivalence) instrument_equivalence
                FROM app.historical_import_batches b
-               JOIN app.market_candles_m1 c ON c.import_batch_id=b.import_batch_id
+               JOIN app.market_candles_m1 c ON c.market_id=b.market_id
+                 AND c.source LIKE b.vendor+'%%'
+                 AND c.timestamp_utc>=b.requested_start_utc
+                 AND c.timestamp_utc<b.requested_end_utc
                JOIN app.markets m ON m.market_id=b.market_id
                WHERE b.import_batch_id=%s
-               GROUP BY b.market_id,b.requested_start_utc,b.requested_end_utc,m.tick_size""",
+               GROUP BY b.market_id,b.vendor,b.requested_start_utc,b.requested_end_utc,m.tick_size""",
             (import_batch_id,),
         )
         batch = cursor.fetchone()
@@ -90,8 +93,10 @@ def _reconcile_source(cursor, batch, import_batch_id: str, start, end,
         """SELECT timestamp_utc,COALESCE(bid_open,mid_open) [open],
                   COALESCE(bid_high,mid_high) high,COALESCE(bid_low,mid_low) low,
                   COALESCE(bid_close,mid_close) [close]
-           FROM app.market_candles_m1 WHERE import_batch_id=%s ORDER BY timestamp_utc""",
-        (import_batch_id,),
+           FROM app.market_candles_m1
+           WHERE market_id=%s AND source LIKE %s
+             AND timestamp_utc>=%s AND timestamp_utc<%s ORDER BY timestamp_utc""",
+        (str(batch["market_id"]), f"{str(batch['vendor']).upper()}%", start, end),
     )
     buckets: dict[object, list[dict[str, object]]] = {}
     for row in cursor.fetchall():

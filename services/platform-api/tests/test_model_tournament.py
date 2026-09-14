@@ -7,7 +7,18 @@ from app.config import Settings
 from app.model_pipeline import chronological_evaluate
 from app.model_tournament import (Challenger, ModelTournamentRequest, challengers,
                                   run_selective_tournament, run_tournament,
-                                  selective_challengers)
+                                  selective_challengers, USDJPY_OPPORTUNITY_POLICY)
+
+
+def test_usdjpy_v2_hypothesis_is_the_predeclared_strict_subset() -> None:
+    assert USDJPY_OPPORTUNITY_POLICY == {
+        "version": "USDJPY_LNY_STRONG_UPTREND_V2",
+        "sessions": ["LONDON_NEW_YORK_OVERLAP"],
+        "trend_regimes": ["STRONG_UPTREND"],
+        "volatility_regimes": [],
+        "regime_combine": "ALL",
+        "outside_policy_action": "HOLD",
+    }
 
 
 def test_selective_native_boosters_use_ternary_objectives() -> None:

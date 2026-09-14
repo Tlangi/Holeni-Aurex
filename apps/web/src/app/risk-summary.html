@@ -1,0 +1,19 @@
+<section class="risk-owner-panel" id="risk-management" aria-labelledby="risk-heading">
+  <header><div><h2 id="risk-heading">Risk</h2><p>South African trading-day controls</p></div><strong>{{ risk()?.status ?? 'UNKNOWN' }}</strong></header>
+  <div class="risk-owner-facts">
+    <div><span>Daily drawdown</span><strong>{{ risk()?.ledger?.daily_drawdown_pct ?? '—' }}%</strong></div>
+    <div><span>Daily loss limit</span><strong>{{ risk()?.policy?.daily_loss_limit_pct ?? '—' }}%</strong></div>
+    <div><span>Reserved risk</span><strong>{{ money(risk()?.ledger?.reserved_risk_zar) }}</strong></div>
+    <div><span>Risk per trade</span><strong>{{ risk()?.policy?.risk_per_trade_pct ?? '—' }}%</strong></div>
+  </div>
+  <details>
+    <summary>Advanced risk details</summary>
+    <div class="risk-owner-facts">
+      <div><span>Maximum positions</span><strong>{{ risk()?.policy?.max_open_positions ?? '—' }}</strong></div>
+      <div><span>Consecutive losses</span><strong>{{ risk()?.ledger?.consecutive_losses ?? 0 }}</strong></div>
+      <div><span>Daily account return</span><strong>{{ risk()?.ledger?.daily_return_pct ?? '—' }}% <small>{{ risk()?.ledger?.source_currency ?? '' }}</small></strong></div>
+      <div><span>Strong-day risk reduction</span><strong>{{ risk()?.ledger?.profit_protection_state ?? '—' }}</strong></div>
+      <div><span>Daily profit quota</span><strong>None <small>market opportunity only</small></strong></div>
+    </div>
+  </details>
+</section>

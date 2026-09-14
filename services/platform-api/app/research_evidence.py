@@ -62,6 +62,27 @@ def _segment_stats(
     }
 
 
+def _window_stats(
+    times: list[datetime], start: datetime, end: datetime, interval: int,
+    market: dict[str, object], holidays: set[object],
+) -> dict[str, object]:
+    """Measure a fixed recent window so missing leading/trailing rows stay visible."""
+    expected = _expected_times(start, end, interval, market, holidays)
+    actual_set = {_aware(value) for value in times}
+    missing = [value for value in expected if value not in actual_set]
+    groups: list[list[datetime]] = []
+    for value in missing:
+        if not groups or value - groups[-1][-1] != timedelta(minutes=interval):
+            groups.append([value])
+        else:
+            groups[-1].append(value)
+    gaps = [{"start": group[0], "end": group[-1], "minutes": len(group) * interval}
+            for group in groups]
+    return {"actual": len(set(expected) & actual_set), "expected": len(expected),
+            "completeness": ((len(set(expected) & actual_set) / len(expected)) if expected else 1.0),
+            "gaps": gaps, "largest": max((item["minutes"] for item in gaps), default=0)}
+
+
 def _persist_segment(
     cursor: object, market_id: str, provider: str, timeframe: str, start: datetime, end: datetime,
     purpose: str, source_reference: str, stats: dict[str, object], minimum: float,
@@ -238,7 +259,32 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 (market_id, settings.broker_rule_fresh_seconds),
             )
             rules_fresh = int(cursor.fetchone()["rule_count"] or 0) > 0
-            recent_gaps = len(m5.get("recent_gaps") or []) + len(m15.get("recent_gaps") or [])
+            recent_window_start = (now - timedelta(
+                hours=settings.execution_gap_lookback_hours
+            )).replace(second=0, microsecond=0)
+            recent_stats: dict[str, dict[str, object]] = {}
+            for timeframe, interval in (("M5", 5), ("M15", 15)):
+                completed_end = now.replace(second=0, microsecond=0) - timedelta(
+                    minutes=now.minute % interval + interval,
+                )
+                window_start = recent_window_start - timedelta(
+                    minutes=recent_window_start.minute % interval,
+                )
+                cursor.execute(
+                    """SELECT DISTINCT open_time_utc FROM app.candles
+                       WHERE market_id=%s AND timeframe=%s AND completed=1
+                         AND is_regular_session=1 AND open_time_utc BETWEEN %s AND %s""",
+                    (market_id, timeframe, window_start, completed_end),
+                )
+                recent_stats[timeframe] = _window_stats(
+                    [row["open_time_utc"] for row in cursor.fetchall()], window_start,
+                    completed_end, interval, market, holidays,
+                )
+            recent_gaps = sum(len(recent_stats[item]["gaps"]) for item in ("M5", "M15"))
+            recent_consolidated_pass = all(
+                float(recent_stats[item]["completeness"]) >= settings.research_segment_minimum_completeness
+                for item in ("M5", "M15")
+            )
             cursor.execute(
                 """SELECT TOP (1) details_json FROM app.market_data_quality_runs
                    WHERE market_id=%s AND timeframe='M15' ORDER BY evaluated_at_utc DESC""",
@@ -249,13 +295,16 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
             canonical_completeness = float(
                 canonical_details.get("regular_session_completeness") or 0
             )
-            gap_policy_pass = (
+            historical_gap_policy_pass = (
                 canonical_completeness >= settings.research_segment_minimum_completeness
             )
             historical = "PASS" if statuses["DUKASCOPY"] and all(value == "PASS" for value in statuses["DUKASCOPY"]) else "WARN"
             training = historical
             if session.should_receive_data:
-                recent_continuity = "PASS" if m5_fresh and m15_fresh and gap_policy_pass else "FAIL"
+                # Execution continuity answers whether the broker stream is usable
+                # now. Earlier incidents remain explicit in recent_stats and the
+                # Dukascopy repair queue, but do not masquerade as a live outage.
+                recent_continuity = "PASS" if m5_fresh and m15_fresh else "FAIL"
                 price_freshness = "PASS" if bid_fresh and ask_fresh and spread_fresh else "FAIL"
             else:
                 recent_continuity = session.status
@@ -272,7 +321,7 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 overall = session.status
             else:
                 overall = "PASS" if all((m5_fresh, m15_fresh, bid_fresh, ask_fresh, spread_fresh,
-                                          rules_fresh, session_valid, latest_complete, gap_policy_pass)) else "FAIL"
+                                          rules_fresh, session_valid, latest_complete)) else "FAIL"
             reasons = {
                 "m5_latest_utc": latest_m5.isoformat() if latest_m5 else None,
                 "m15_latest_utc": latest_m15.isoformat() if latest_m15 else None,
@@ -286,7 +335,12 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 "gaps_acknowledged": recent_gaps > 0,
                 "minimum_completeness": settings.research_segment_minimum_completeness,
                 "canonical_completeness": canonical_completeness,
-                "gap_policy_pass": gap_policy_pass,
+                "historical_gap_policy_pass": historical_gap_policy_pass,
+                "recent_consolidated_m5_completeness": recent_stats["M5"]["completeness"],
+                "recent_consolidated_m15_completeness": recent_stats["M15"]["completeness"],
+                "recent_consolidated_gap_policy_pass": recent_consolidated_pass,
+                "recent_incidents_are_execution_blocking": False,
+                "continuity_uses_canonical_timeline_with_source_provenance": True,
             }
             cursor.execute(
                 """INSERT app.execution_quality_snapshots

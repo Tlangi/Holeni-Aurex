@@ -36,6 +36,40 @@ FEATURES = ["ret1", "ret4", "ema_gap", "rsi", "atr_pct", "range_pct", "volume_z"
 MODEL_ROOT = Path(__file__).resolve().parents[1] / "models"
 
 
+def training_dataset_identity(frame: pd.DataFrame) -> str:
+    """Hash the complete canonical input so scheduled checks are material-change driven."""
+    columns = [name for name in (
+        "open", "high", "low", "close", "tick_volume", "provider", "observed_spread_bps",
+    ) if name in frame.columns]
+    canonical = frame[columns].copy().sort_index()
+    canonical.index = canonical.index.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return hashlib.sha256(
+        canonical.to_csv(index=True, float_format="%.12g").encode()
+    ).hexdigest()
+
+
+def scheduled_retrain_reason(
+    frame: pd.DataFrame, *, prior_sha256: str | None, prior_rows: int | None,
+    prior_end: datetime | None, minimum_new_rows: int,
+) -> tuple[bool, str, int]:
+    """Retrain on historical repair, but not on an unchanged or tiny live append."""
+    current_sha256 = training_dataset_identity(frame)
+    if prior_sha256 == current_sha256:
+        return False, "DATASET_UNCHANGED", 0
+    if not prior_sha256 or prior_rows is None or prior_end is None:
+        return True, "DATASET_IDENTITY_BASELINE", len(frame)
+    cutoff = pd.Timestamp(prior_end)
+    cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
+    appended = int((frame.index > cutoff).sum())
+    row_delta = len(frame) - int(prior_rows)
+    historical_or_revised = row_delta != appended or appended == 0
+    if historical_or_revised:
+        return True, "HISTORICAL_DATASET_CHANGED", appended
+    if appended < minimum_new_rows:
+        return False, "INSUFFICIENT_NEW_M15_DATA", appended
+    return True, "NEW_M15_THRESHOLD_REACHED", appended
+
+
 def inference_feature_vector(frame: pd.DataFrame, *, horizon: int = LABEL_HORIZON_BARS) -> pd.Series:
     """The single production feature contract shared by research and live inference."""
     featured = add_features(frame, horizon=horizon, labelled=False)
@@ -139,15 +173,22 @@ def trading_metrics(
              if np.isscalar(round_trip_cost_bps) else np.asarray(round_trip_cost_bps, dtype=float))
     if len(costs) != len(future_returns):
         raise ValueError("Transaction-cost evidence must align with return observations")
-    net = signed[trades] - costs[trades] / 10000.0
+    gross = signed[trades]
+    trade_costs = costs[trades] / 10000.0
+    net = gross - trade_costs
     count = int(len(net))
     if count == 0:
         return {"trade_count": 0, "win_rate": 0.0, "average_win": 0.0, "average_loss": 0.0,
                 "expectancy": 0.0, "profit_factor": 0.0, "max_drawdown": 0.0,
+                "gross_expectancy": 0.0, "net_expectancy": 0.0,
+                "gross_profit_factor": 0.0, "net_profit_factor": 0.0,
+                "cost_drag": 0.0, "return_on_risk": 0.0, "hold_rate": 1.0,
                 "sharpe_ratio": None, "sortino_ratio": None,
                 "precision_buy": None, "precision_sell": None}
     wins, losses = net[net > 0], net[net < 0]
     gross_win, gross_loss = float(wins.sum()), float(-losses.sum())
+    pre_cost_wins, pre_cost_losses = gross[gross > 0], gross[gross < 0]
+    pre_cost_profit, pre_cost_loss = float(pre_cost_wins.sum()), float(-pre_cost_losses.sum())
     curve = np.cumsum(net)
     peaks = np.maximum.accumulate(np.concatenate(([0.0], curve)))
     drawdowns = peaks[1:] - curve
@@ -162,6 +203,12 @@ def trading_metrics(
         "average_loss": float(np.mean(losses)) if len(losses) else 0.0,
         "expectancy": float(np.mean(net)),
         "profit_factor": gross_win / gross_loss if gross_loss else (999.0 if gross_win else 0.0),
+        "gross_expectancy": float(np.mean(gross)), "net_expectancy": float(np.mean(net)),
+        "gross_profit_factor": pre_cost_profit / pre_cost_loss if pre_cost_loss else (999.0 if pre_cost_profit else 0.0),
+        "net_profit_factor": gross_win / gross_loss if gross_loss else (999.0 if gross_win else 0.0),
+        "cost_drag": float(np.mean(trade_costs)),
+        "return_on_risk": float(np.sum(net) / max(float(np.max(drawdowns)), 1e-12)),
+        "hold_rate": float(np.mean(~trades)),
         "max_drawdown": float(np.max(drawdowns)) if len(drawdowns) else 0.0,
         "sharpe_ratio": float(np.mean(net) / deviation * np.sqrt(252)) if deviation else None,
         "sortino_ratio": float(np.mean(net) / downside_deviation * np.sqrt(252)) if downside_deviation else None,
@@ -365,7 +412,16 @@ def chronological_evaluate(
     )
 
 
-def _market_frame(cursor: object, market_id: str) -> pd.DataFrame:
+def _market_frame(cursor: object, market_id: str, *, before_utc: datetime | None = None,
+                  from_utc: datetime | None = None) -> pd.DataFrame:
+    bounds = ""
+    parameters: list[object] = [market_id]
+    if from_utc is not None:
+        bounds += " AND open_time_utc >= %s"
+        parameters.append(from_utc)
+    if before_utc is not None:
+        bounds += " AND open_time_utc < %s"
+        parameters.append(before_utc)
     cursor.execute(
         """;WITH canonical AS (
              SELECT open_time_utc,[open],high,low,[close],tick_count,source,spread_close,
@@ -376,13 +432,13 @@ def _market_frame(cursor: object, market_id: str) -> pd.DataFrame:
                       COALESCE(ingested_at_utc,created_at_utc) DESC) source_rank
              FROM app.candles
              WHERE market_id=%s AND timeframe='M15' AND completed=1 AND quality_status='PASS'
-               AND is_regular_session=1)
+               AND is_regular_session=1""" + bounds + """ )
            SELECT open_time_utc,[open],high,low,[close],tick_count,source,
                   CASE WHEN spread_close IS NOT NULL AND [close]>0
                        THEN spread_close/[close]*10000 END observed_spread_bps
            FROM canonical WHERE source_rank=1
            ORDER BY open_time_utc""",
-        (market_id,),
+        tuple(parameters),
     )
     rows = cursor.fetchall()
     columns = ["time", "open", "high", "low", "close", "tick_volume", "provider", "observed_spread_bps"]
@@ -401,12 +457,38 @@ def _market_frame(cursor: object, market_id: str) -> pd.DataFrame:
     return frame
 
 
+def select_training_window(frame: pd.DataFrame, *, policy: str = "FULL_HISTORY",
+                           start_utc: datetime | None = None,
+                           end_utc: datetime | None = None,
+                           rolling_days: int = 90) -> pd.DataFrame:
+    """Select model evidence without allowing unrelated old history to block it."""
+    if policy not in {"FULL_HISTORY", "RECENT_CONSECUTIVE", "ROLLING_WINDOW"}:
+        raise ValueError("Unsupported training window policy")
+    if frame.empty or policy == "FULL_HISTORY":
+        return frame
+    index = pd.DatetimeIndex(frame.index)
+    end = pd.Timestamp(end_utc) if end_utc else index.max()
+    end = end.tz_localize("UTC") if end.tzinfo is None else end.tz_convert("UTC")
+    if policy == "ROLLING_WINDOW":
+        start = end - pd.Timedelta(days=max(1, int(rolling_days)))
+    else:
+        if start_utc is None:
+            raise ValueError("RECENT_CONSECUTIVE requires start_utc")
+        start = pd.Timestamp(start_utc)
+        start = start.tz_localize("UTC") if start.tzinfo is None else start.tz_convert("UTC")
+    return frame.loc[(index >= start) & (index <= end)].copy()
+
+
 def train_all_markets(
     settings: Settings, *, minimum_rows: int = 2000, acceptance_auc: float = 0.52,
     retrain_type: str = "SCHEDULED_RETRAIN", material_change: str | None = None,
+    window_policy: str = "FULL_HISTORY", window_start_utc: datetime | None = None,
+    window_end_utc: datetime | None = None, rolling_days: int = 90,
 ) -> list[dict[str, object]]:
-    if minimum_rows < settings.model_minimum_rows:
-        raise ValueError("Training cannot lower the configured 2,000-row evidence floor")
+    minimum_floor = (settings.research_model_minimum_rows
+                     if retrain_type == "RESEARCH_RETRAIN" else settings.model_minimum_rows)
+    if minimum_rows < minimum_floor:
+        raise ValueError(f"Training cannot lower the configured {minimum_floor}-row floor")
     if retrain_type not in {"SCHEDULED_RETRAIN", "RESEARCH_RETRAIN"}:
         raise ValueError("Unsupported retraining type")
     if retrain_type == "RESEARCH_RETRAIN" and not (material_change or "").strip():
@@ -424,34 +506,51 @@ def train_all_markets(
         )
         markets = cursor.fetchall()
         for strategy_version_id, market_id, symbol in markets:
-            frame = _market_frame(cursor, str(market_id))
+            frame = select_training_window(
+                _market_frame(cursor, str(market_id)), policy=window_policy,
+                start_utc=window_start_utc, end_utc=window_end_utc,
+                rolling_days=rolling_days,
+            )
             if frame.empty or len(frame) < minimum_rows + 60:
                 outcomes.append({"symbol": symbol, "result": "BLOCKED", "reason": "INSUFFICIENT_CANDLES", "rows": len(frame)})
                 continue
+            dataset_sha256 = training_dataset_identity(frame)
             cursor.execute(
-                """SELECT TOP (1) me.validation_end_utc
+                """SELECT TOP (1) mv.dataset_sha256,mv.dataset_rows,mv.dataset_end_utc
                    FROM app.model_versions mv
-                   JOIN app.model_evaluations me ON me.model_version_id=mv.model_version_id
                    WHERE mv.market_id=%s AND mv.strategy_version_id=%s
-                   ORDER BY me.evaluated_at_utc DESC""",
+                   ORDER BY mv.registered_at_utc DESC""",
                 (str(market_id), str(strategy_version_id)),
             )
             prior = cursor.fetchone()
             latest_candle = frame.index[-1].to_pydatetime()
             if prior and retrain_type == "SCHEDULED_RETRAIN":
-                previous_end = prior[0].replace(tzinfo=timezone.utc)
-                new_rows = int((frame.index > previous_end).sum())
-                if new_rows < settings.model_minimum_new_rows:
+                prior_hash = prior[0] if not isinstance(prior, dict) else prior.get("dataset_sha256")
+                prior_rows = prior[1] if not isinstance(prior, dict) else prior.get("dataset_rows")
+                prior_end = prior[2] if not isinstance(prior, dict) else prior.get("dataset_end_utc")
+                should_train, reason, new_rows = scheduled_retrain_reason(
+                    frame, prior_sha256=prior_hash, prior_rows=prior_rows,
+                    prior_end=prior_end, minimum_new_rows=settings.model_minimum_new_rows,
+                )
+                if not should_train:
                     outcomes.append({"symbol": symbol, "result": "CURRENT",
-                                     "reason": "INSUFFICIENT_NEW_M15_DATA", "rows": len(frame),
+                                     "reason": reason, "rows": len(frame),
+                                     "dataset_sha256": dataset_sha256,
+                                     "prior_rows": int(prior_rows or 0),
                                      "new_rows": new_rows,
                                      "required_new_rows": settings.model_minimum_new_rows})
                     continue
-            evaluation = chronological_evaluate(
-                frame, minimum_rows=minimum_rows,
-                walk_forward_windows=settings.model_walk_forward_windows,
-                round_trip_cost_bps=settings.model_round_trip_cost_bps,
-            )
+            try:
+                evaluation = chronological_evaluate(
+                    frame, minimum_rows=minimum_rows,
+                    walk_forward_windows=settings.model_walk_forward_windows,
+                    round_trip_cost_bps=settings.model_round_trip_cost_bps,
+                )
+            except ValueError as exc:
+                outcomes.append({"symbol": symbol, "result": "BLOCKED",
+                                 "reason": "INSUFFICIENT_FEATURE_COMPLETE_ROWS",
+                                 "rows": len(frame), "detail": str(exc)})
+                continue
             stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
             version = f"trained-{stamp}-{uuid.uuid4().hex[:6]}"
             artifact = MODEL_ROOT / f"{symbol}-{version}.joblib"
@@ -468,18 +567,46 @@ def train_all_markets(
             )
             baseline_outperformed = gate_evidence.gates["baseline_outperformance"]
             passed = gate_evidence.passed
+            failed_gates = sorted(name for name, value in gate_evidence.gates.items() if not value)
             model_id, evaluation_id = str(uuid.uuid4()), str(uuid.uuid4())
             try:
                 cursor.execute(
                     """INSERT app.model_versions
                        (model_version_id,strategy_version_id,market_id,model_name,version,artifact_path,
                         artifact_sha256,validation_auc,training_rows,status,feature_version,label_version,
-                        validation_policy_version,source_identity,dirty_worktree)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        validation_policy_version,source_identity,dirty_worktree,dataset_sha256,
+                        dataset_rows,dataset_end_utc)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (model_id, str(strategy_version_id), str(market_id), f"{symbol} HGB", version,
                      str(artifact.resolve()), digest, evaluation.auc, evaluation.training_rows,
                      "CANDIDATE" if passed else "REJECTED", FEATURE_VERSION, LABEL_VERSION,
-                     VALIDATION_POLICY_VERSION, str(identity["source_identity"]), bool(identity["dirty_worktree"])),
+                     VALIDATION_POLICY_VERSION, str(identity["source_identity"]), bool(identity["dirty_worktree"]),
+                     dataset_sha256, len(frame), latest_candle),
+                )
+                # Immutable evidence manifest: the model records exactly which
+                # canonical rows it trained on, while keeping provider counts
+                # separate.  This never changes execution authority.
+                provider_counts = frame["provider"].astype(str).str.upper().value_counts()
+                duka_repairs = int(sum(int(value) for key, value in provider_counts.items()
+                                       if "DUKASCOPY" in key))
+                ig_rows = int(sum(int(value) for key, value in provider_counts.items()
+                                  if key.startswith("IG")))
+                proxy_rows = int(sum(int(value) for key, value in provider_counts.items()
+                                     if "PROXY" in key))
+                repair_pct = (duka_repairs / len(frame) * 100) if len(frame) else 0.0
+                cursor.execute(
+                    """INSERT app.model_dataset_manifests
+                       (manifest_id,market_id,model_version_id,training_start_utc,training_end_utc,
+                        validation_start_utc,validation_end_utc,ig_candle_count,dukascopy_repair_count,
+                        proxy_candle_count,missing_expected_count,repair_percentage,consecutiveness_score,
+                        session_completeness,dataset_sha256,feature_version,git_commit,policy_version)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,%s,%s,1.0,%s,%s,%s,%s)""",
+                    (str(uuid.uuid4()), str(market_id), model_id,
+                     evaluation.training_start, evaluation.training_end,
+                     evaluation.validation_start, evaluation.validation_end,
+                     ig_rows, duka_repairs, proxy_rows, repair_pct,
+                     1.0 if len(frame) else 0.0, dataset_sha256, FEATURE_VERSION,
+                     str(identity.get("git_commit") or ""), VALIDATION_POLICY_VERSION),
                 )
                 cursor.execute(
                     """INSERT app.model_evaluations
@@ -488,8 +615,8 @@ def train_all_markets(
                         validation_auc,acceptance_auc,result,walk_forward_windows,trade_count,win_rate,
                         profit_factor,expectancy,max_drawdown,sharpe_ratio,sortino_ratio,precision_buy,
                         precision_sell,baseline_outperformed,cost_assumption_bps,failure_reason,
-                        brier_score,calibration_error,feature_drift_score,regime_coverage)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        brier_score,calibration_error,feature_drift_score,regime_coverage,gate_evidence_json)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (evaluation_id, model_id, evaluation.training_rows, evaluation.validation_rows,
                      evaluation.training_start, evaluation.training_end, evaluation.validation_start,
                      evaluation.validation_end, evaluation.auc, acceptance_auc,
@@ -497,9 +624,15 @@ def train_all_markets(
                      metrics["win_rate"], metrics["profit_factor"], metrics["expectancy"],
                      metrics["max_drawdown"], metrics["sharpe_ratio"], metrics["sortino_ratio"],
                      metrics["precision_buy"], metrics["precision_sell"], baseline_outperformed,
-                     settings.model_round_trip_cost_bps, None if passed else "ENHANCED_VALIDATION_GATE_FAILED",
+                     settings.model_round_trip_cost_bps, None if passed else "FAILED:" + ",".join(failed_gates),
                      evaluation.brier_score, evaluation.calibration_error,
-                     evaluation.feature_drift_score, evaluation.regime_coverage),
+                     evaluation.feature_drift_score, evaluation.regime_coverage,
+                     json.dumps({"gates": gate_evidence.gates,
+                                 "positive_window_fraction": gate_evidence.positive_window_fraction,
+                                 "minimum_window_trades_observed": gate_evidence.minimum_window_trades_observed,
+                                 "minimum_window_trades_required": gate_evidence.minimum_window_trades_required,
+                                 "best_baseline_expectancy": gate_evidence.best_baseline_expectancy},
+                                sort_keys=True)),
                 )
                 for window in evaluation.windows:
                     cursor.execute(
@@ -576,6 +709,8 @@ def train_all_markets(
                              "trade_count": metrics["trade_count"], "expectancy": metrics["expectancy"],
                              "profit_factor": metrics["profit_factor"], "walk_forward_windows": len(evaluation.windows),
                              "baseline_outperformed": baseline_outperformed,
+                             "failed_gates": failed_gates,
+                             "dataset_sha256": dataset_sha256,
                              "validation_policy_version": VALIDATION_POLICY_VERSION,
                              "holdout_required": passed, "owner_approval_required": passed})
     return outcomes

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from app.config import Settings
 from app.database import open_database
+from app.market_calendar import is_regular_session
+from app.recent_window import assess_recent_m5_window
 
 
 def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, object]:
@@ -13,7 +15,8 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
             """SELECT m.market_id,m.symbol,m.market_tier,m.research_enabled,m.training_enabled,
-                      m.signal_enabled,m.demo_trading_enabled,
+                      m.signal_enabled,m.demo_trading_enabled,m.calendar_code,m.market_timezone,
+                      m.session_open_local,m.session_close_local,
                       qm.timeframe,c15.latest_time_utc,c5.latest_m5_utc,
                       qm.duplicate_count,qm.missing_period_count,
                       qm.invalid_ohlc_count,qm.details_json,qm.evaluated_at_utc,
@@ -53,11 +56,38 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
                 int(row.get("invalid_ohlc_count") or 0) == 0
                 and int(row.get("duplicate_count") or 0) == 0
             )
+            cursor.execute(
+                "SELECT holiday_date FROM app.market_holidays WHERE calendar_code=%s AND session_close_local IS NULL",
+                (str(row["calendar_code"]),),
+            )
+            holidays = {item["holiday_date"] for item in cursor.fetchall()}
+            expected = lambda timestamp: is_regular_session(
+                timestamp, calendar_code=str(row["calendar_code"]),
+                market_timezone=str(row["market_timezone"]),
+                session_open=row["session_open_local"], session_close=row["session_close_local"],
+                holidays=holidays,
+            )
+            # Stored session flags can predate calendar/DST corrections.
+            # Recompute membership from the authoritative calendar.
+            cursor.execute(
+                """SELECT open_time_utc,[open],high,low,[close],source
+                   FROM app.candles WHERE market_id=%s AND timeframe='M5'
+                     AND completed=1 AND quality_status='PASS'
+                   ORDER BY open_time_utc DESC""",
+                (str(row["market_id"]),),
+            )
+            recent_rows = [item for item in cursor.fetchall()
+                           if expected(item["open_time_utc"].replace(tzinfo=timezone.utc))]
+            recent_window = assess_recent_m5_window(
+                recent_rows, required_rows=settings.recent_m5_decision_rows,
+                max_gap_minutes=settings.recent_m5_max_gap_minutes,
+                is_expected_timestamp=expected,
+            )
             gap_policy_pass = completeness >= settings.research_segment_minimum_completeness
-            realtime = m5_fresh and m15_fresh and integrity_clean and gap_policy_pass
+            realtime = m5_fresh and m15_fresh and integrity_clean and recent_window.passed
             research = completeness >= settings.research_segment_minimum_completeness
             training = bool(row["training_enabled"]) and research
-            shadow = realtime and research and bool(row["signal_enabled"])
+            shadow = realtime and bool(row["signal_enabled"])
             broker_fresh = bool(row.get("broker_rule_observed_at_utc")) and (
                 now - row["broker_rule_observed_at_utc"].replace(tzinfo=timezone.utc)
             ).total_seconds() <= settings.broker_rule_fresh_seconds
@@ -69,6 +99,7 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
             if not m15_fresh: reasons.append("M15_STALE")
             if recent_gaps and not gap_policy_pass: reasons.append("RECENT_GAPS_BELOW_COMPLETENESS_POLICY")
             if not research: reasons.append("HISTORICAL_COMPLETENESS_BELOW_THRESHOLD")
+            reasons.extend(recent_window.reasons)
             if not broker_fresh: reasons.append("BROKER_RULES_STALE")
             if not increment_authoritative: reasons.append("SIZE_INCREMENT_NOT_AUTHORITATIVE")
             if not settings.demo_execution_configured: reasons.append("EXECUTION_OPT_IN_DISABLED")
@@ -81,6 +112,20 @@ def qualify_markets(settings: Settings, *, persist: bool = True) -> dict[str, ob
                 "gaps_acknowledged": recent_gaps > 0,
                 "gap_policy_pass": gap_policy_pass,
                 "historical_gap_count": int(row.get("missing_period_count") or 0),
+                "recent_m5_decision_window": {
+                    "required_rows": recent_window.required_rows,
+                    "observed_rows": recent_window.observed_rows,
+                    "completeness_percentage": recent_window.completeness_percentage,
+                    "start_utc": recent_window.start_utc.isoformat() if recent_window.start_utc else None,
+                    "end_utc": recent_window.end_utc.isoformat() if recent_window.end_utc else None,
+                    "passed": recent_window.passed,
+                    "reasons": list(recent_window.reasons),
+                    "gaps": [
+                        {"after_utc": left.isoformat(), "before_utc": right.isoformat(),
+                         "missing_candles": missing}
+                        for left, right, missing in recent_window.gap_ranges
+                    ],
+                },
                 "historical_session_completeness": completeness,
                 "largest_gap": details.get("largest_gap"),
                 "duplicate_count": int(row.get("duplicate_count") or 0),

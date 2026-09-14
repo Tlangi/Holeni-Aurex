@@ -605,6 +605,51 @@ def reserve_research_lineage(
     }
 
 
+def reject_unconsumed_research_lineage(
+    settings: Settings, tenant_id: str, user_id: str, user_role: str,
+    lineage_id: str, *, reason: str, evidence: dict[str, object],
+) -> dict[str, object]:
+    """Close an open research lineage without inspecting or consuming holdout."""
+    if user_role.lower() not in {"owner", "administrator", "admin"}:
+        raise PermissionError("Owner role is required")
+    if len(reason.strip()) < 20:
+        raise ValueError("A specific rejection reason is required")
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT l.market_id,l.status,
+                      (SELECT COUNT(*) FROM app.holdout_candidates c
+                       WHERE c.research_lineage_id=l.research_lineage_id) candidate_count,
+                      (SELECT COUNT(*) FROM app.holdout_evaluations e
+                       JOIN app.holdout_candidates c ON c.holdout_candidate_id=e.holdout_candidate_id
+                       WHERE c.research_lineage_id=l.research_lineage_id) evaluation_count
+               FROM app.research_lineages l
+               WHERE l.research_lineage_id=%s AND l.tenant_id=%s""",
+            (lineage_id, tenant_id),
+        )
+        lineage = cursor.fetchone()
+        if not lineage or lineage["status"] != "RESERVED":
+            raise ValueError("A reserved research lineage is required")
+        if int(lineage["candidate_count"]) or int(lineage["evaluation_count"]):
+            raise ValueError("A frozen or evaluated lineage cannot be retired through this path")
+        cursor.execute(
+            """UPDATE app.research_lineages SET status='REJECTED',closed_at_utc=SYSUTCDATETIME()
+               WHERE research_lineage_id=%s AND tenant_id=%s AND status='RESERVED'""",
+            (lineage_id, tenant_id),
+        )
+        event_id = insert_lifecycle_event(
+            cursor, tenant_id=tenant_id, market_id=str(lineage["market_id"]),
+            from_state="RESEARCH", to_state="REJECTED", reason=reason,
+            evidence={**evidence, "holdout_consumed": False,
+                      "holdout_candidate_count": int(lineage["candidate_count"]),
+                      "holdout_evaluation_count": int(lineage["evaluation_count"])},
+            research_lineage_id=lineage_id, changed_by_user_id=user_id,
+        )
+        connection.commit()
+    return {"status": "REJECTED", "research_lineage_id": lineage_id,
+            "lifecycle_event_id": event_id, "holdout_consumed": False}
+
+
 def freeze_candidate(
     settings: Settings, tenant_id: str, request: FreezeCandidateRequest,
 ) -> dict[str, object]:

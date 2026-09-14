@@ -1,0 +1,9 @@
+:host { display: block; }
+.proposal-row { display: grid; grid-template-columns: .8fr 1fr 1.5fr 1fr 2fr 1.2fr 1.2fr; gap: 1rem; align-items: center; padding: 1rem 1.25rem; border-top: 1px solid var(--border-color, #e7eaf0); }
+.proposal-row span { min-width: 0; }
+.proposal-row small { display: block; margin-top: .25rem; color: #657086; overflow-wrap: anywhere; }
+.proposal-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.proposal-actions .decline { color: #a32929; border-color: #efcaca; }
+.proposal-message { margin: .75rem 1.25rem; padding: .75rem 1rem; border-radius: .5rem; background: #eef6ff; color: #174b8a; }
+@media (max-width: 980px) { .proposal-row { grid-template-columns: 1fr 1fr; } .proposal-row.history-head { display: none; } }
+@media (max-width: 620px) { .proposal-row { grid-template-columns: 1fr; } .proposal-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; } .proposal-actions button { min-height: 44px; width: 100%; } }

@@ -294,9 +294,12 @@ def selective_directions_from_edges(
     hold_p = probabilities[:, class_index[0]] if 0 in class_index else np.zeros(len(probabilities))
     buy_p = probabilities[:, class_index[1]] if 1 in class_index else np.zeros(len(probabilities))
     sell_p = probabilities[:, class_index[2]] if 2 in class_index else np.zeros(len(probabilities))
-    costs = validation["effective_cost_bps"].to_numpy(float) + specification.safety_buffer_bps
-    buy_edge = buy_p * buy_move_bps - sell_p * sell_move_bps - costs
-    sell_edge = sell_p * sell_move_bps - buy_p * buy_move_bps - costs
+    transaction_costs = validation["effective_cost_bps"].to_numpy(float)
+    required_costs = transaction_costs + specification.safety_buffer_bps
+    buy_expected_move = buy_p * buy_move_bps - sell_p * sell_move_bps
+    sell_expected_move = sell_p * sell_move_bps - buy_p * buy_move_bps
+    buy_edge = buy_expected_move - required_costs
+    sell_edge = sell_expected_move - required_costs
     directions = np.where(
         (buy_p > sell_p) & (buy_p > hold_p) & (buy_edge > 0), 1,
         np.where((sell_p > buy_p) & (sell_p > hold_p) & (sell_edge > 0), -1, 0),
@@ -304,10 +307,19 @@ def selective_directions_from_edges(
     explanations = [{
         "decision": "BUY" if direction == 1 else "SELL" if direction == -1 else "HOLD",
         "buy_probability": float(bp), "sell_probability": float(sp), "hold_probability": float(hp),
-        "buy_edge_bps": float(be), "sell_edge_bps": float(se), "cost_floor_bps": float(cost),
+        "buy_expected_move_bps": float(bm), "sell_expected_move_bps": float(sm),
+        "expected_transaction_cost_bps": float(tc), "cost_floor_bps": float(tc),
+        "safety_buffer_bps": float(specification.safety_buffer_bps),
+        "buy_edge_bps": float(be), "sell_edge_bps": float(se),
+        "buy_edge_cost_ratio": float(bm / tc) if tc > 0 else 999.0,
+        "sell_edge_cost_ratio": float(sm / tc) if tc > 0 else 999.0,
+        "statistical_edge": "PASS" if max(bp, sp) > hp else "FAIL",
+        "economic_edge": "PASS" if max(bm, sm) > tc else "FAIL",
+        "execution_edge": "PASS" if max(be, se) > 0 else "FAIL",
         "reason": "POSITIVE_NET_EDGE" if direction else "EDGE_DOES_NOT_CLEAR_COST_AND_BUFFER",
-    } for direction, bp, sp, hp, be, se, cost in zip(
-        directions, buy_p, sell_p, hold_p, buy_edge, sell_edge, costs, strict=True,
+    } for direction, bp, sp, hp, bm, sm, be, se, tc in zip(
+        directions, buy_p, sell_p, hold_p, buy_expected_move, sell_expected_move,
+        buy_edge, sell_edge, transaction_costs, strict=True,
     )]
     return directions.astype(int), explanations
 
@@ -402,6 +414,38 @@ def regime_slices(frame: pd.DataFrame, directions: np.ndarray, symbol: str) -> l
     return results
 
 
+def predeclared_trade_eligibility(
+    frame: pd.DataFrame, symbol: str, policy: dict[str, object] | None,
+) -> np.ndarray:
+    """Evaluate a causal, configuration-bound opportunity policy.
+
+    This is applied only to candidate actions. Rows are never removed from
+    feature construction or model fitting, preventing artificial continuity.
+    """
+    if not policy:
+        return np.ones(len(frame), dtype=bool)
+    allowed_sessions = set(str(value) for value in policy.get("sessions", []))
+    allowed_trends = set(str(value) for value in policy.get("trend_regimes", []))
+    allowed_volatility = set(str(value) for value in policy.get("volatility_regimes", []))
+    combine = str(policy.get("regime_combine", "ANY")).upper()
+    sessions = np.asarray([market_session(symbol, value.to_pydatetime()) for value in frame.index])
+    trends = np.asarray([trend_regime(float(gap), float(atr))
+                         for gap, atr in zip(frame["ema_gap"], frame["atr_pct"], strict=True)])
+    volatility = volatility_regimes(frame["atr_pct"]).to_numpy(str)
+    session_ok = np.isin(sessions, list(allowed_sessions)) if allowed_sessions else np.ones(len(frame), bool)
+    trend_ok = np.isin(trends, list(allowed_trends)) if allowed_trends else np.zeros(len(frame), bool)
+    volatility_ok = np.isin(volatility, list(allowed_volatility)) if allowed_volatility else np.zeros(len(frame), bool)
+    if allowed_trends and allowed_volatility:
+        regime_ok = trend_ok & volatility_ok if combine == "ALL" else trend_ok | volatility_ok
+    elif allowed_trends:
+        regime_ok = trend_ok
+    elif allowed_volatility:
+        regime_ok = volatility_ok
+    else:
+        regime_ok = np.ones(len(frame), bool)
+    return session_ok & regime_ok
+
+
 def _multiclass_calibration_error(
     targets: np.ndarray, probabilities: np.ndarray, classes: np.ndarray, bins: int = 10,
 ) -> float:
@@ -426,6 +470,7 @@ def selective_walk_forward_evaluate(
     estimator_factory: Callable[[], object], minimum_rows: int,
     configured_cost_bps: float, walk_forward_windows: int = 3,
     validation_fraction: float = 0.20, holdout_start: datetime | None = None,
+    eligibility_policy: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Evaluate one predeclared candidate on purged development windows only."""
     data = build_selective_target(frame, specification, configured_cost_bps=configured_cost_bps)
@@ -456,6 +501,11 @@ def selective_walk_forward_evaluate(
         directions, explanations = selective_directions(
             probabilities, model.classes_, training, validation, specification,
         )
+        eligible = predeclared_trade_eligibility(validation, specification.symbol, eligibility_policy)
+        directions[~eligible] = 0
+        for index in np.flatnonzero(~eligible):
+            explanations[int(index)]["decision"] = "HOLD"
+            explanations[int(index)]["reason"] = "OUTSIDE_PREDECLARED_OPPORTUNITY_POLICY"
         frozen = getattr(model, "estimator", None)
         underlying = getattr(frozen, "estimator", frozen)
         if underlying is not None and hasattr(underlying, "member_disagreement"):
@@ -523,6 +573,7 @@ def selective_walk_forward_evaluate(
         "protocol_version": PROTOCOL_VERSION,
         "selection_scope": "DEVELOPMENT_ONLY",
         "target_specification": specification.configuration() | {"sha256": specification.digest},
+        "eligibility_policy": eligibility_policy,
         "feature_version": "FEATURES_V1_PROVIDER_BOUNDARY_RESET",
         "metrics": metrics, "windows": windows, "bootstrap_expectancy": bootstrap,
         "cost_stress": stresses, "regimes": regimes,

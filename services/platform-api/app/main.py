@@ -62,6 +62,7 @@ from app.auth import (
 )
 from app.observability import CorrelationLoggingMiddleware, configure_logging
 from app.operations_status import read_operational_assurance
+from app.owner_overview import read_market_summary, read_owner_readiness
 from app.scheduler import AccountSyncScheduler
 from app.trading_status import read_trading_status
 from app.shadow_performance import read_daily_shadow_performance
@@ -73,6 +74,9 @@ from app.model_monitoring import read_model_monitoring
 from app.macro_intelligence import generate_market_decisions, read_macro_status, sync_official_macro_sources
 from app.intelligence import read_intelligence_status
 from app.trade_proposals import ProposalDecision, decide_trade_proposal, read_trade_proposals
+from app.proposal_approval_reservations import (
+    ApprovalReservationRequest, issue_approval_challenge, reserve_owner_approval,
+)
 from app.historical_data_status import read_historical_data_status
 from app.trades import read_trade_history
 from app.readiness import read_trading_readiness
@@ -136,7 +140,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             startup_recover_experimental_demo(settings)
         except Exception:
             logger.exception("Experimental Demo startup reconciliation failed; submissions remain fail-closed")
-        scheduler.start()
+    # The database can be temporarily unavailable during API startup. The
+    # scheduler checks schema readiness on each cycle and retries; gating its
+    # creation here would silently disable account sync until an API restart.
+    scheduler.start()
     try:
         yield
     finally:
@@ -238,6 +245,28 @@ def dashboard(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
             content=dashboard_unavailable_payload(settings),
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
+
+
+@app.get("/api/v1/owner/readiness", tags=["dashboard"])
+def owner_readiness(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Compact, read-only owner status; no execution authority is inferred."""
+    try:
+        return JSONResponse(content=read_owner_readiness(settings, user.tenant_id))
+    except DatabaseUnavailable:
+        return JSONResponse(content={"overall_health": "OFFLINE", "blocking_reasons": [
+            {"code": "DATABASE_UNAVAILABLE", "message": "Platform data is unavailable.", "action": "View System"},
+        ]}, status_code=503)
+
+
+@app.get("/api/v1/owner/markets", tags=["markets"])
+def owner_market_summary(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
+    """Batched current IG M5 quotes; research providers cannot supply execution prices."""
+    try:
+        return JSONResponse(content=read_market_summary(settings, user.tenant_id))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except DatabaseUnavailable:
+        return JSONResponse(content={"status": "unavailable", "markets": []}, status_code=503)
 
 
 @app.get("/api/v1/trading/status", tags=["trading"])
@@ -498,6 +527,33 @@ def trade_proposal_decision(
     except ValueError as exc:
         return JSONResponse(content={"status": "conflict", "message": str(exc)},
                             status_code=status.HTTP_409_CONFLICT)
+
+
+@app.post("/api/v1/trade-proposals/{proposal_id}/approval-challenge", tags=["trading"])
+def trade_proposal_approval_challenge(
+    proposal_id: str, user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    """Issue an authenticated owner/tenant-bound short-lived token; no execution authority."""
+    try:
+        return JSONResponse(content=issue_approval_challenge(settings, user, proposal_id))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except ValueError as exc:
+        return JSONResponse(content={"status": "conflict", "message": str(exc)}, status_code=409)
+
+
+@app.post("/api/v1/trade-proposals/{proposal_id}/approval-reservation", tags=["trading"])
+def trade_proposal_approval_reservation(
+    proposal_id: str, payload: ApprovalReservationRequest,
+    user: AuthenticatedUser = Depends(require_user),
+) -> JSONResponse:
+    """Consume approval once and reserve risk review; never touches the IG adapter."""
+    try:
+        return JSONResponse(content=reserve_owner_approval(settings, user, proposal_id, payload))
+    except PermissionError as exc:
+        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
+    except ValueError as exc:
+        return JSONResponse(content={"status": "conflict", "message": str(exc)}, status_code=409)
 
 
 @app.get("/api/v1/shadow/performance/daily", tags=["trading"])

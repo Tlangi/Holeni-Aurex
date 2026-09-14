@@ -89,6 +89,24 @@ export interface MarketCandlesData {
   quality?: MarketHistoryQuality;
 }
 
+export interface OwnerReadinessData {
+  overall_health: 'HEALTHY' | 'DEGRADED' | 'ACTION_REQUIRED' | 'OFFLINE';
+  trading_mode: string; broker_environment: 'IG_DEMO'; live_status: 'DISABLED';
+  data_status: string; model_status: string; shadow_status: string;
+  broker_status: string; risk_status: string; demo_auto_status: string;
+  human_approved_demo_status: string; pending_approvals: number;
+  reconciliation_unresolved: number;
+  blocking_reasons: Array<{ code: string; message: string; action: string }>;
+}
+
+export interface OwnerMarketSummaryData {
+  generated_at_utc: string; environment: 'IG_DEMO';
+  markets: Array<{ symbol: string; display_name: string; bid: string | null; ask: string | null;
+    spread: string | null; quote_observed_at_utc: string | null; quote_age_seconds: number | null;
+    quote_status: 'CURRENT_IG' | 'STALE_OR_UNAVAILABLE'; quote_source: string | null;
+    model_status: string; demo_configured: boolean; trading_eligibility: string }>;
+}
+
 export interface ResearchJob {
   research_job_id: string; job_type: string; status: string; effective_status: string;
   market: string | null; timeframe: string | null; model_family: string | null;
@@ -368,6 +386,14 @@ export interface TradeProposalsData {
     risk_zar: string; horizon_minutes: number; decision_time_utc: string; data_cutoff_utc: string;
     expires_at_utc: string; status: string; rationale_summary: string; notification_status: string;
     decided_at_utc: string | null; decision_reason: string | null; created_at_utc: string;
+    evidence: {
+      risk_acceptable?: 'PASS' | 'FAIL';
+      tradeability?: {
+        expected_cost_bps?: number; cost_floor_bps?: number; edge_cost_ratio?: number;
+        buy_edge_bps?: number; sell_edge_bps?: number;
+        statistical_edge?: string; economic_edge?: string; execution_edge?: string; reason?: string;
+      };
+    };
   }>;
 }
 
@@ -382,10 +408,10 @@ export interface RiskStatusData {
     max_consecutive_losses: number;
     preferred_daily_return_pct: null;
     profit_protection_pct: string;
-    daily_profit_lock_pct: string;
+    daily_profit_lock_pct: string | null;
     max_portfolio_risk_pct: string;
     max_intraday_drawdown_pct: string;
-    profit_giveback_limit_pct: string;
+    profit_giveback_limit_pct: string | null;
     max_trades_per_day: number;
     min_reward_risk_ratio: string;
     profit_objective_authority: 'NONE_NO_FORCED_TRADING';
@@ -500,6 +526,13 @@ export interface TradingStatusData {
   mode: 'READ_ONLY' | 'SHADOW' | 'DEMO_AUTO' | 'PAUSED';
   new_orders_enabled: boolean;
   pause_reason: string | null;
+  shadow_evaluations: Array<{
+    symbol: string;
+    status: 'BLOCKED' | 'WAITING_FOR_SIGNAL';
+    reason: string;
+    decision: string | null;
+    evaluated_at_utc: string | null;
+  }>;
 }
 
 export interface StrategiesData {
@@ -898,6 +931,14 @@ export class DashboardApi {
 
   load(): Observable<DashboardData> {
     return this.http.get<DashboardData>('/api/v1/dashboard');
+  }
+
+  ownerReadiness(): Observable<OwnerReadinessData> {
+    return this.http.get<OwnerReadinessData>('/api/v1/owner/readiness');
+  }
+
+  ownerMarkets(): Observable<OwnerMarketSummaryData> {
+    return this.http.get<OwnerMarketSummaryData>('/api/v1/owner/markets');
   }
 
   sync(): Observable<DashboardData> {

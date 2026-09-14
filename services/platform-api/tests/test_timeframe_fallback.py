@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from app.timeframe_fallback import (DERIVED_FROM_M1, M1_MISSING_M5_FALLBACK_AVAILABLE,
-                                    derive_m5_from_complete_m1, feature_availability,
+                                    derive_m5_from_complete_m1, derived_lineage, feature_availability,
                                     mark_m1_gap_fallback)
 
 
@@ -50,3 +50,15 @@ def test_feature_fallback_is_requirement_aware() -> None:
                                 m5_available=True) == "MISSING"
     assert feature_availability(requires_genuine_m1=False, m1_available=False,
                                 m5_available=True) == M1_MISSING_M5_FALLBACK_AVAILABLE
+
+
+def test_germany_reference_derivation_stays_noncanonical() -> None:
+    assert derived_lineage("DUKASCOPY", "INDEX_REFERENCE", False) == (
+        "DUKASCOPY_M1_DERIVED", "INDEX_REFERENCE", False,
+    )
+
+
+def test_exact_pair_derivation_can_retain_research_eligibility() -> None:
+    assert derived_lineage("DUKASCOPY", "EXACT_PAIR", True) == (
+        "DUKASCOPY_M1_DERIVED", "EXACT_PAIR", True,
+    )

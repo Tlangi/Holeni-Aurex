@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 from email.utils import parseaddr
+from contextlib import nullcontext
 from hashlib import sha256
 import json
 import logging
@@ -10,7 +11,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.database import open_database
-from app.ig_demo import CurrencyRate, IGAccount, IGDemoClient
+from app.ig_demo import CurrencyRate, IGAccount, IGDemoClient, IGDemoUnavailable, ig_error_category
 from app.risk_ledger import refresh_daily_risk_ledger
 from app.order_lifecycle import transition_intent
 
@@ -31,7 +32,10 @@ def _owner_email(settings: Settings) -> str:
     return parseaddr(configured)[1].strip().lower()
 
 
-def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> dict[str, object]:
+def sync_ig_demo(
+    settings: Settings, *, correlation_id: str | None = None,
+    client: IGDemoClient | None = None,
+) -> dict[str, object]:
     """Read IG demo state and persist one atomic, auditable ZAR snapshot."""
     if not _process_sync_lock.acquire(blocking=False):
         raise SyncAlreadyRunning("An IG synchronisation is already running")
@@ -68,11 +72,12 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
             connection.commit()
 
             try:
-                with IGDemoClient(settings) as client:
-                    account = client.account()
-                    positions = client.positions()
-                    working_orders = client.working_orders()
-                    conversion = client.zar_rate(account.currency)
+                client_context = nullcontext(client) if client is not None else IGDemoClient(settings)
+                with client_context as authenticated:
+                    account = authenticated.account()
+                    positions = authenticated.positions()
+                    working_orders = authenticated.working_orders()
+                    conversion = authenticated.zar_rate(account.currency)
                 tenant_id = _ensure_tenant(cursor, settings)
                 _ensure_owner(cursor, tenant_id, settings)
                 broker_connection_id = _ensure_broker_connection(cursor, tenant_id, account)
@@ -154,6 +159,10 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
             except Exception as exc:
                 connection.rollback()
                 duration_ms = round((perf_counter() - started_clock) * 1000)
+                broker_code = exc.error_code if isinstance(exc, IGDemoUnavailable) else None
+                category = ig_error_category(broker_code) if broker_code else "SYNC_FAILURE"
+                error_detail = (f"IG {category.lower()}: {broker_code}" if broker_code
+                                else "IG account synchronisation failed")
                 cursor.execute(
                     """
                     UPDATE app.sync_runs
@@ -161,15 +170,15 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
                         completed_at_utc=SYSUTCDATETIME(), duration_ms=%s
                     WHERE sync_run_id=%s;
                     """,
-                    (type(exc).__name__[:80], duration_ms, sync_run_id),
+                    ((broker_code or type(exc).__name__)[:80], duration_ms, sync_run_id),
                 )
                 cursor.execute(
                     """
                     UPDATE app.platform_components
-                    SET status='DEGRADED', status_detail=N'IG account synchronisation failed',
+                    SET status='DEGRADED', status_detail=%s,
                         checked_at_utc=SYSUTCDATETIME()
-                    WHERE component_code IN ('ig_demo', 'market_feed');
-                    """
+                    WHERE component_code='ig_demo';
+                    """, (error_detail[:300],)
                 )
                 connection.commit()
                 logger.warning(
@@ -179,7 +188,7 @@ def sync_ig_demo(settings: Settings, *, correlation_id: str | None = None) -> di
                         "worker": "account_sync",
                         "operation": "ig.sync",
                         "duration_ms": duration_ms,
-                        "result": type(exc).__name__,
+                        "result": category,
                     },
                 )
                 raise

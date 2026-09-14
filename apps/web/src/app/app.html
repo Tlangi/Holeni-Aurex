@@ -1,6 +1,6 @@
 <div class="app-shell" [class.sidebar-is-open]="sidebarOpen()">
   <aside class="sidebar" aria-label="Primary navigation">
-    <a class="brand" href="/" aria-label="Aurex dashboard">
+    <a class="brand" href="/dashboard" aria-label="Aurex dashboard">
       <span class="brand-mark" aria-hidden="true"><span></span></span>
       <span>AUREX</span>
     </a>
@@ -10,7 +10,7 @@
         <section class="nav-section">
           <p class="nav-label">{{ section.group }}</p>
           @for (item of section.items; track item.label) {
-            <a class="nav-item" [class.active]="item.active" [attr.href]="'#' + item.target" (click)="navigateTo(item.target, $event)">
+            <a class="nav-item" [class.active]="router.url === item.target || (item.target === '/markets' && marketDetail())" [attr.href]="item.target" (click)="sidebarOpen.set(false)">
               <span class="nav-icon" [attr.data-icon]="item.icon" aria-hidden="true"></span>
               <span>{{ item.label }}</span>
             </a>
@@ -33,15 +33,11 @@
       </button>
       <div class="workspace-title"><strong>Aurex operations</strong><span>IG demo · South Africa</span></div>
       <div class="topbar-actions">
-        <a class="secondary-button control-button" href="/research">Research</a>
-        <a class="secondary-button control-button" href="/experimental-lab">Experimental Lab</a>
-        <div class="trading-status" [class.disabled]="tradingReadiness()?.status !== 'READY'">
+        <a class="secondary-button control-button approval-button" href="#trade-proposals" (click)="navigateTo('trade-proposals', $event)">Approvals@if (pendingProposalCount()) { <span class="approval-count">{{ pendingProposalCount() }}</span> }</a>
+        <div class="trading-status" [class.disabled]="ownerReadiness()?.demo_auto_status !== 'READY'">
           <span class="status-dot"></span><span>Execution</span>
-          <strong>{{ tradingStatus()?.mode ?? 'UNKNOWN' }}</strong>
+          <strong>{{ ownerReadiness()?.trading_mode ?? tradingStatus()?.mode ?? 'UNKNOWN' }}</strong>
         </div>
-        <button class="secondary-button control-button" type="button" [disabled]="controlBusy()" (click)="changeExecutionControl()">
-          {{ controlBusy() ? 'Updating…' : tradingStatus()?.mode === 'PAUSED' ? 'Resume shadow' : 'Pause' }}
-        </button>
         <div class="profile-button"><span class="avatar">{{ ownerInitials() }}</span><span class="profile-copy"><strong>{{ ownerUser()?.display_name ?? ownerUser()?.email ?? 'Owner' }}</strong><small>{{ ownerRole() }}</small></span></div>
         <button class="secondary-button logout-button" type="button" [disabled]="logoutBusy()" (click)="logout()">
           {{ logoutBusy() ? 'Logging out…' : 'Logout' }}
@@ -50,20 +46,33 @@
     </header>
 
     <main class="dashboard" id="dashboard-top">
+      <section class="environment-banner" aria-label="Trading environment">
+        <strong>IG DEMO · NO LIVE CAPITAL</strong>
+        <span>Experimental and Shadow activity only. Live execution is permanently disabled.</span>
+        <em>LIVE DISABLED</em>
+      </section>
+      <nav class="area-links" aria-label="Current area">
+        @if (dashboardTab() === 'markets' && marketDetail()) { <a href="/markets">All markets</a><span aria-hidden="true">/</span><strong>{{ selectedMarket() }}</strong> }
+        @if (dashboardTab() === 'trading') { <strong>Trading</strong><a href="/experimental-lab">Experimental Demo controls</a> }
+        @if (dashboardTab() === 'research') { <strong>Research</strong><a href="/research/advanced">Advanced research tools</a> }
+        @if (dashboardTab() === 'risk') { <strong>Risk</strong> }
+        @if (dashboardTab() === 'system') { <strong>System</strong> }
+      </nav>
       <section class="page-heading">
         <div>
           <p class="eyebrow">{{ todayLabel }}</p>
-          <h1>{{ greetingLabel }}</h1>
-          <p>Here’s how your demo trading account is performing.</p>
+          <h1>{{ dashboardTab() === 'overview' ? greetingLabel : dashboardTab() === 'markets' ? 'Markets' : dashboardTab() === 'trading' ? 'Trading' : dashboardTab() === 'research' ? 'Research' : dashboardTab() === 'risk' ? 'Risk' : 'System' }}</h1>
+          <p>{{ dashboardTab() === 'overview' ? 'Your IG Demo command centre.' : 'Current Aurex evidence and controls for this area.' }}</p>
         </div>
         <button class="secondary-button" type="button" [disabled]="loading()" (click)="refreshData()"><span class="refresh-icon" [class.spinning]="loading()"></span>{{ loading() ? 'Synchronising…' : 'Refresh IG data' }}</button>
       </section>
 
-      <nav class="dashboard-tabs" aria-label="Dashboard sections">
-        @for (tab of dashboardTabs; track tab[0]) {
-          <button type="button" [class.active]="dashboardTab() === tab[0]" (click)="selectDashboardTab(tab[0])">{{ tab[1] }}</button>
-        }
-      </nav>
+      <section class="attention-panel" aria-labelledby="not-trading-heading" [hidden]="dashboardTab() !== 'overview'">
+        <div><p class="eyebrow">ACTION REQUIRED</p><h2 id="not-trading-heading">Why Aurex is not trading</h2></div>
+        <p>{{ ownerAttention().message }}</p>
+        <a class="secondary-button" [attr.href]="'#' + ownerAttention().target" (click)="navigateTo(ownerAttention().target, $event)">{{ ownerAttention().action }}</a>
+      </section>
+
 
       <section class="panel validation-panel" id="model-validation" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Enhanced validation evidence</h2><p>Walk-forward, transaction-cost and baseline gates. No evidence is inferred from a model file.</p></div></div>
@@ -104,6 +113,15 @@
       @if (logoutError()) {
         <div class="sync-alert" role="alert"><strong>Session control unavailable</strong><span>{{ logoutError() }}</span></div>
       }
+
+      <section class="owner-summary" aria-label="Owner status summary" [hidden]="dashboardTab() !== 'overview'">
+        <article><span>Overall health</span><strong>{{ ownerHealth() }}</strong><small>{{ ownerReadiness() ? 'Based on current operational checks' : 'Readiness unavailable' }}</small></article>
+        <article><span>Trading mode</span><strong>{{ ownerReadiness()?.trading_mode ?? tradingStatus()?.mode ?? 'UNKNOWN' }}</strong><small>IG Demo · Live disabled</small></article>
+        <article><span>Pending approvals</span><strong>{{ pendingProposalCount() }}</strong><a href="#trade-proposals" (click)="navigateTo('trade-proposals', $event)">Review proposals</a></article>
+        <article><span>Open IG Demo positions</span><strong>{{ dashboardData()?.open_positions ?? 0 }}</strong><a href="#open-positions" (click)="navigateTo('open-positions', $event)">View positions</a></article>
+        <article><span>Current risk per trade</span><strong>{{ riskStatus()?.policy?.risk_per_trade_pct ?? '—' }}%</strong><a href="#risk-management" (click)="navigateTo('risk-management', $event)">View risk</a></article>
+        <article><span>Shadow activity</span><strong>{{ ownerReadiness()?.shadow_status === 'MODE_SELECTED_NOT_ATTESTED' ? 'Mode selected · activity unverified' : ownerReadiness()?.shadow_status === 'RUNNING' ? 'Running' : 'Not running' }}</strong><small>Simulated · separate from IG Demo P&amp;L</small></article>
+      </section>
 
       <section class="portfolio-hero" aria-label="Portfolio overview" [hidden]="dashboardTab() !== 'overview'">
         <div>
@@ -192,6 +210,7 @@
 
       <section class="panel model-readiness-panel" id="forward-evidence" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Forward evidence</h2><p>Immutable observations captured from completed M15 candles. Accumulation never overrides validation or risk gates.</p></div><span class="record-count">{{ forwardEvidence()?.snapshots?.length ?? 0 }} observations</span></div>
+        <details class="owner-advanced-details"><summary>Advanced per-market evidence</summary>
         <div class="model-readiness-grid">
           @for (market of forwardEvidence()?.latest ?? []; track market.symbol) {
             <article class="model-card forward-card">
@@ -215,6 +234,7 @@
             <div class="history-empty"><strong>Forward evidence is starting</strong><span>The continuous worker records one immutable snapshot for each completed M15 candle.</span></div>
           }
         </div>
+        </details>
       </section>
 
       <section class="panel replay-panel" id="replay-laboratory" [hidden]="dashboardTab() !== 'research'">
@@ -264,15 +284,36 @@
         <p class="macro-authority">Final authority: {{ macroStatus()?.execution_authority ?? 'DETERMINISTIC_RISK_ENGINE' }}. Macro intelligence cannot submit an order.</p>
       </section>
 
-      <section class="panel market-panel" id="market-data" [hidden]="dashboardTab() !== 'markets'">
+      <section class="panel market-list-panel" [hidden]="dashboardTab() !== 'markets' || marketDetail()" aria-label="Markets overview">
+        <div class="panel-header"><div><h2>Market overview</h2><p>Choose a market for live prices, chart and detailed evidence.</p></div></div>
+        <div class="owner-market-list">
+          @for (market of marketInventory()?.markets ?? []; track market.symbol) {
+            <a [attr.href]="'/markets/' + market.symbol" class="owner-market-row">
+              <strong>{{ market.display_name }}</strong><span>{{ market.asset_class }}</span>
+              <span>Bid / Ask: {{ marketQuote(market.symbol)?.bid ?? '—' }} / {{ marketQuote(market.symbol)?.ask ?? '—' }}</span>
+              <span>Spread: {{ marketQuote(market.symbol)?.spread ?? '—' }}</span>
+              <span>Data: {{ marketFreshness(market.symbol) }}</span><span>Model: {{ marketModelStatus(market.symbol) }}</span>
+              <span>Trading: {{ marketQuote(market.symbol)?.trading_eligibility === 'UNVERIFIED' ? 'Not verified' : marketQuote(market.symbol)?.trading_eligibility ?? 'Not verified' }}</span><b>View market →</b>
+            </a>
+          } @empty { <p>No market inventory is available. Check System for service health.</p> }
+        </div>
+      </section>
+      <section class="panel market-panel" id="market-data" [hidden]="dashboardTab() !== 'markets' || !marketDetail()">
+        <nav class="market-detail-tabs" aria-label="Market detail sections">
+          <a href="#market-overview">Overview</a><a href="#market-chart">Chart</a><a href="#market-model">Model</a><a href="#market-quality">Data quality</a><a href="#market-trades">Trades</a>
+        </nav>
+        <div class="market-detail-overview" id="market-overview">
+          <div><small>Market</small><strong>{{ selectedMarket() }}</strong></div>
+          <div><small>Latest bid</small><strong>{{ marketData()?.candles?.at(-1)?.bid_close ?? 'Unavailable' }}</strong></div>
+          <div><small>Latest ask</small><strong>{{ marketData()?.candles?.at(-1)?.ask_close ?? 'Unavailable' }}</strong></div>
+          <div><small>Spread</small><strong>{{ marketData()?.candles?.at(-1)?.spread_close ?? 'Unavailable' }}</strong></div>
+          <div><small>Data</small><strong>{{ chartIsStale() ? 'Stale or closed' : marketData()?.candles?.length ? 'Current' : 'Unavailable' }}</strong></div>
+          <div><small>Model</small><strong>{{ marketModelStatus(selectedMarket()) }}</strong></div>
+        </div>
+        <div id="market-chart"></div>
         <div class="panel-header market-header">
           <div><h2>Live market structure</h2><p>Completed IG Lightstreamer candles · persisted across trading days · South African time</p></div>
           <div class="market-controls">
-            <button class="start-testing-button" type="button"
-              [disabled]="controlBusy() || tradingStatus()?.mode === 'SHADOW'"
-              (click)="startShadowTesting()">
-              {{ controlBusy() ? 'Starting…' : tradingStatus()?.mode === 'SHADOW' ? 'Shadow testing active' : 'Start shadow testing' }}
-            </button>
             <div class="range-selector" aria-label="Market">
               @for (market of marketInventory()?.markets ?? []; track market.symbol) {
                 <button type="button" [class.active]="selectedMarket() === market.symbol" [disabled]="marketLoading()" (click)="selectMarket(market.symbol)">{{ market.display_name }} <small>T{{ market.tier }}</small></button>
@@ -356,17 +397,19 @@
           </div>
           <div class="chart-legend"><span><i class="legend-up"></i>Price up</span><span><i class="legend-down"></i>Price down</span></div>
           @if (marketData()?.quality; as quality) {
-            <details class="data-quality"><summary><span>Data quality: <strong>{{ quality.quality_status }}</strong></span><small>{{ quality.returned_candle_count }} candles retrieved · {{ quality.gap_count }} unexplained gaps</small></summary>
+            <details class="data-quality" id="market-quality"><summary><span>Data quality: <strong>{{ quality.quality_status }}</strong></span><small>{{ quality.returned_candle_count }} candles retrieved · {{ quality.gap_count }} unexplained gaps</small></summary>
               <dl><div><dt>Requested period</dt><dd>{{ quality.requested_start_utc ? (quality.requested_start_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : 'Retention history' }} → {{ quality.requested_end_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }}</dd></div><div><dt>Available period</dt><dd>{{ quality.actual_start_utc ? (quality.actual_start_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : 'No candles' }} → {{ quality.actual_end_utc ? (quality.actual_end_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : '—' }}</dd></div><div><dt>Expected / missing</dt><dd>{{ quality.expected_candle_count ?? 'Unverified' }} / {{ quality.missing_candle_count ?? 'Unverified' }}</dd></div><div><dt>Not retained / delayed</dt><dd>{{ quality.period_not_retained_count ?? 'Unverified' }} / {{ quality.delayed_candle_count ?? 'Unverified' }}</dd></div><div><dt>Completeness</dt><dd>{{ quality.completeness_percentage === null ? 'Unverified' : quality.completeness_percentage + '%' }}</dd></div><div><dt>Largest gap</dt><dd>{{ durationLabel(quality.largest_unexplained_gap_seconds) }}</dd></div><div><dt>Calendar</dt><dd>{{ quality.calendar_source }}</dd></div></dl>
               @if (quality.limitation) { <p>{{ quality.limitation }}</p> }
               @for (gap of quality.gaps.slice(0, 12); track gap.after_utc) { <p class="gap-detail">{{ gap.classification }} · {{ gap.after_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }} → {{ gap.before_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }} · {{ gap.missing_candles }} candles</p> }
             </details>
           }
         }
+        <div class="market-detail-footer" id="market-model"><strong>Model</strong><span>{{ marketModelStatus(selectedMarket()) }} · Detailed evidence is in Research.</span><a href="/research">View model evidence</a></div>
+        <div class="market-detail-footer" id="market-trades"><strong>Trades</strong><span>IG Demo positions and reconciled history are in Trading.</span><a href="/trading">View trading activity</a></div>
       </section>
 
-      <section class="dashboard-grid" [hidden]="dashboardTab() !== 'overview'">
-        <article class="panel performance-panel">
+      <section class="dashboard-grid" [hidden]="dashboardTab() !== 'overview' && dashboardTab() !== 'system'">
+        <article class="panel performance-panel" [hidden]="dashboardTab() !== 'overview'">
           <div class="panel-header">
             <div><h2>Portfolio performance</h2><p>Account equity over time</p></div>
           </div>
@@ -386,7 +429,7 @@
           </div>
         </article>
 
-        <article class="panel status-panel" id="system-status">
+        <article class="panel status-panel" id="system-status" [hidden]="dashboardTab() !== 'system'">
           <div class="panel-header"><div><h2>System status</h2><p>Live platform component state</p></div></div>
           <div class="status-list">
             @for (status of statuses(); track status.label) {
@@ -409,8 +452,10 @@
         </article>
       </section>
 
-      <section class="panel model-readiness-panel" id="operational-assurance" [hidden]="dashboardTab() !== 'operations'">
+      <section class="panel model-readiness-panel" id="operational-assurance" [hidden]="dashboardTab() !== 'system'">
         <div class="panel-header"><div><h2>Operational assurance</h2><p>Audited delivery, recovery and platform-health evidence</p></div><span class="record-count">{{ operationsStatus()?.status ?? 'UNAVAILABLE' }}</span></div>
+        <p>{{ operationsStatus()?.open_alert_count ?? 0 }} open operational alert(s). Detailed delivery and recovery evidence is available below.</p>
+        <details class="owner-advanced-details"><summary>Advanced operational evidence</summary>
         <div class="model-readiness-grid assurance-grid">
           <article class="model-card">
             <div class="model-card-head"><div><strong>Daily progress report</strong><small>Google SMTP delivery ledger</small></div><span [class.ready]="operationsStatus()?.latest_daily_report?.status === 'SENT'">{{ operationsStatus()?.latest_daily_report?.status ?? 'NONE' }}</span></div>
@@ -445,6 +490,7 @@
             }
           </article>
         </div>
+        </details>
       </section>
 
       <section class="panel positions-panel" id="open-positions" [hidden]="dashboardTab() !== 'trading'">
@@ -465,7 +511,17 @@
         </div>
       </section>
 
-      <section class="panel trade-history-panel" id="strategies" [hidden]="dashboardTab() !== 'trading'">
+      <section class="panel trading-control-panel" [hidden]="dashboardTab() !== 'trading'">
+        <div class="panel-header"><div><h2>Trading control</h2><p>Current mode: {{ tradingStatus()?.mode ?? 'Unknown' }} · IG Demo only</p></div></div>
+        <p>Shadow results are simulated and are never combined with IG Demo account P&amp;L.</p>
+        <button class="secondary-button control-button" type="button" [disabled]="controlBusy()" (click)="changeExecutionControl()">
+          {{ controlBusy() ? 'Updating…' : tradingStatus()?.mode === 'PAUSED' ? 'Resume shadow' : 'Pause signal evaluation' }}
+        </button>
+        <button class="secondary-button control-button" type="button" [disabled]="controlBusy() || tradingStatus()?.mode === 'SHADOW'" (click)="startShadowTesting()">{{ tradingStatus()?.mode === 'SHADOW' ? 'Shadow testing active' : 'Start shadow testing' }}</button>
+        @if (testingMessage()) { <p role="status">{{ testingMessage() }}</p> }
+      </section>
+
+      <section class="panel trade-history-panel" id="strategies" [hidden]="dashboardTab() !== 'research'">
         <div class="panel-header"><div><h2>Strategies</h2><p>Versioned demo strategies and model-validation coverage</p></div></div>
         <div class="history-table" role="table" aria-label="Strategies">
           <div class="strategy-row history-head" role="row"><span>Strategy</span><span>Version</span><span>Timeframe</span><span>Buy</span><span>Sell</span><span>Models</span><span>Status</span><span>Control</span></div>
@@ -499,34 +555,9 @@
         </div>
       </section>
 
-      <section class="panel trade-history-panel" id="trade-proposals" [hidden]="dashboardTab() !== 'trading'">
-        <div class="panel-header">
-          <div><h2>Trade proposals</h2><p>Local research suggestions requiring owner review. Approval does not submit an IG order.</p></div>
-          <span class="record-count">{{ tradeProposals()?.count ?? 0 }} PROPOSALS</span>
-        </div>
-        @if (proposalMessage()) { <p class="proposal-message" role="status">{{ proposalMessage() }}</p> }
-        <div class="history-table" role="table" aria-label="Owner trade proposals">
-          <div class="proposal-row history-head" role="row"><span>Market</span><span>Proposal</span><span>Levels</span><span>Risk</span><span>Evidence</span><span>Status</span><span>Owner action</span></div>
-          @for (proposal of tradeProposals()?.proposals ?? []; track proposal.trade_proposal_id) {
-            <div class="proposal-row" role="row">
-              <span><strong>{{ proposal.market }}</strong><small>{{ proposal.created_at_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg' }} SAST</small></span>
-              <span><em class="side-badge" [class.sell]="proposal.direction === 'SELL'">{{ proposal.direction }}</em><small>{{ confidencePercent(proposal.confidence) }} · {{ proposal.horizon_minutes }}m</small></span>
-              <span><small>Entry {{ proposal.entry_price }}</small><small>Stop {{ proposal.stop_price }} · Target {{ proposal.target_price }}</small></span>
-              <span><strong>{{ money(proposal.risk_zar) }}</strong><small>Size {{ proposal.proposed_size }}</small></span>
-              <span><small>{{ proposal.rationale_summary }}</small><small>Cutoff {{ proposal.data_cutoff_utc | date:'dd MMM, HH:mm':'UTC' }} UTC</small></span>
-              <span><strong>{{ proposal.status }}</strong><small>Email {{ proposal.notification_status }}</small></span>
-              <span class="proposal-actions">
-                @if (proposal.status === 'PENDING_OWNER') {
-                  <button type="button" class="row-control" [disabled]="!!proposalBusy()" (click)="decideProposal(proposal.trade_proposal_id, 'APPROVE')">Approve</button>
-                  <button type="button" class="row-control decline" [disabled]="!!proposalBusy()" (click)="decideProposal(proposal.trade_proposal_id, 'DECLINE')">Decline</button>
-                } @else { <small>{{ proposal.decided_at_utc ? (proposal.decided_at_utc | date:'dd MMM, HH:mm':'Africa/Johannesburg') : 'No action available' }}</small> }
-              </span>
-            </div>
-          } @empty {
-            <div class="history-empty"><strong>No proposals awaiting review</strong><span>A proposal appears only after eligible Aurex model evidence and local research provenance exist.</span></div>
-          }
-        </div>
-      </section>
+      @if (dashboardTab() === 'trading') {
+        <aurex-trade-approvals [proposals]="tradeProposals()" [busyId]="proposalBusy()" [message]="proposalMessage()" [now]="currentTime()" (decision)="decideProposal($event.id, $event.action)" />
+      }
 
       <section class="panel trade-history-panel" id="shadow-trades" [hidden]="dashboardTab() !== 'trading'">
         <div class="panel-header"><div><h2>Hypothetical shadow trades</h2><p>Cost-aware simulated entries and exits. These records are never sent to IG.</p></div><span class="record-count">{{ shadowTrades()?.count ?? 0 }} SHADOW</span></div>
@@ -541,7 +572,13 @@
               <span>{{ trade.status }}{{ trade.exit_reason ? ' · ' + trade.exit_reason : '' }}</span>
             </div>
           } @empty {
-            <div class="history-empty"><strong>No hypothetical trades yet</strong><span>A validated model and approved shadow risk decision are required.</span></div>
+            <div class="history-empty">
+              <strong>No hypothetical trades yet</strong>
+              <span>Aurex is still evaluating each market; an empty trade ledger is not an idle worker.</span>
+              @for (evaluation of tradingStatus()?.shadow_evaluations ?? []; track evaluation.symbol) {
+                <span>{{ evaluation.symbol }} · {{ evaluation.status }} · {{ modelBlockerLabel(evaluation.reason) }}</span>
+              }
+            </div>
           }
         </div>
       </section>
@@ -556,22 +593,9 @@
         </div>
       </section>
 
-      <section class="dashboard-grid operational-grid" [hidden]="dashboardTab() !== 'operations'">
-        <article class="panel status-panel" id="risk-management">
-          <div class="panel-header"><div><h2>Daily risk ledger</h2><p>South African trading-day controls</p></div><span class="record-count">{{ riskStatus()?.status ?? 'UNKNOWN' }}</span></div>
-          <div class="risk-facts">
-            <div><span>Risk per trade</span><strong>{{ riskStatus()?.policy?.risk_per_trade_pct ?? '—' }}%</strong></div>
-            <div><span>Daily loss limit</span><strong>{{ riskStatus()?.policy?.daily_loss_limit_pct ?? '—' }}%</strong></div>
-            <div><span>Daily drawdown</span><strong>{{ riskStatus()?.ledger?.daily_drawdown_pct ?? '—' }}%</strong></div>
-            <div><span>Reserved risk</span><strong>{{ money(riskStatus()?.ledger?.reserved_risk_zar) }}</strong></div>
-            <div><span>Maximum positions</span><strong>{{ riskStatus()?.policy?.max_open_positions ?? '—' }}</strong></div>
-            <div><span>Consecutive losses</span><strong>{{ riskStatus()?.ledger?.consecutive_losses ?? 0 }}</strong></div>
-            <div><span>Daily account return</span><strong>{{ riskStatus()?.ledger?.daily_return_pct ?? '—' }}% <small>{{ riskStatus()?.ledger?.source_currency ?? '' }}</small></strong></div>
-            <div><span>Profit protection</span><strong>{{ riskStatus()?.ledger?.profit_protection_state ?? '—' }}</strong></div>
-            <div><span>Daily profit target</span><strong>None <small>quality signals only</small></strong></div>
-          </div>
-        </article>
-        <article class="panel status-panel" id="reconciliation">
+      <section class="dashboard-grid operational-grid" [hidden]="dashboardTab() !== 'risk' && dashboardTab() !== 'system'">
+        @if (dashboardTab() === 'risk') { <aurex-risk-summary [risk]="riskStatus()" /> }
+        <article class="panel status-panel" id="reconciliation" [hidden]="dashboardTab() !== 'system'">
           <div class="panel-header"><div><h2>Broker reconciliation</h2><p>Unexpected and uncertain broker state</p></div><span class="record-count">{{ reconciliation()?.status ?? 'UNKNOWN' }}</span></div>
           @for (issue of reconciliation()?.issues ?? []; track issue.id) {
             <div class="sync-alert"><strong>{{ issue.type }}</strong><span>{{ issue.detail }} · {{ issue.status }}</span></div>

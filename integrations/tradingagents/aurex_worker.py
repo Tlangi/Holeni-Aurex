@@ -27,7 +27,11 @@ SYSTEM_PROMPT = """You are an internal Aurex Forex/CFD research team operating l
 Use only the supplied point-in-time JSON evidence. Do not call tools, browse, request more data,
 or produce orders, sizes, model promotions, or execution instructions. Aurex statistical models,
 qualification, deterministic risk, reconciliation, and execution remain authoritative. Return only
-a concise JSON research conclusion matching the requested schema. Do not reveal chain-of-thought."""
+a concise JSON research conclusion matching the requested schema. Challenge whether expected movement
+exceeds spread, slippage, financing where applicable, other costs, and a safety buffer. Trade only when
+the supplied evidence supports a positive cost-adjusted opportunity. HOLD and no-trade days are valid.
+Never chase a daily profit quota, force trade frequency, alter risk after a loss, or treat leverage as
+trading edge. Do not reveal chain-of-thought."""
 
 
 class ModelResearchConclusion(BaseModel):
@@ -92,6 +96,8 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
             "Return its provenance_id in evidence_references.",
             "Do not claim that an empty evidence category was assessed.",
             "If evidence is insufficient, return NEUTRAL or REJECT and identify the gap.",
+            "Ask whether there is sufficient net edge after costs and risk, never how to meet a daily profit target.",
+            "Low-profit, losing-within-risk, and no-trade days are valid outcomes.",
         ],
         "asset_guidance": {
             "FX": "Use rates, macro, session, carry, technical, volatility and costs; no equity fundamentals.",

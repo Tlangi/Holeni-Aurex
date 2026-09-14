@@ -93,13 +93,10 @@ def refresh_daily_risk_ledger(
     limit = Decimal(str(policy[0])) if policy else Decimal("0")
     intraday_limit = Decimal(str(policy[1])) if policy else Decimal("0")
     protect_at = Decimal(str(policy[2])) if policy else Decimal("0")
-    lock_at = Decimal(str(policy[3])) if policy else Decimal("0")
-    giveback_limit = Decimal(str(policy[4])) if policy else Decimal("0")
-    giveback_pct = ((peak_return - daily_return) / peak_return * Decimal("100")) if peak_return > 0 else Decimal("0")
-    protection_state = (
-        "DAILY_GAIN_LOCKED" if daily_return >= lock_at else
-        "PROFIT_PROTECTION" if peak_return >= protect_at else "NORMAL"
-    )
+    # Daily gains are outcomes, never quotas or entry-stopping thresholds. A
+    # configurable strong-day policy may reduce subsequent risk, but it cannot
+    # block an otherwise independent qualified opportunity.
+    protection_state = "PROFIT_PROTECTION" if protect_at > 0 and peak_return >= protect_at else "NORMAL"
     reason = None
     if not policy:
         reason = "NO_ACTIVE_RISK_POLICY"
@@ -107,10 +104,6 @@ def refresh_daily_risk_ledger(
         reason = "DAILY_LOSS_LIMIT"
     elif intraday_drawdown >= intraday_limit:
         reason = "INTRADAY_DRAWDOWN_LIMIT"
-    elif daily_return >= lock_at:
-        reason = "DAILY_PROFIT_LOCK"
-    elif peak_return >= protect_at and giveback_pct >= giveback_limit:
-        reason = "PROFIT_GIVEBACK_LIMIT"
     status = "BLOCKED" if reason else "CURRENT"
     cursor.execute(
         """MERGE app.daily_risk_ledger AS target

@@ -18,6 +18,28 @@ class IGDemoUnavailable(RuntimeError):
         self.error_code = error_code
 
 
+def ig_error_category(error_code: str | None) -> str:
+    """Classify IG failures without confusing credentials, sessions and quotas."""
+    code = (error_code or "").strip().lower()
+    if "historical-data-allowance" in code:
+        return "HISTORICAL_QUOTA"
+    if any(marker in code for marker in (
+        "account-disabled", "account-locked", "account-blocked",
+        "invalid-credential", "invalid-details", "invalid-password",
+        "authentication", "api-key-invalid",
+    )):
+        return "AUTHENTICATION"
+    if any(marker in code for marker in (
+        "client-token-invalid", "security-token-invalid", "token-invalid",
+        "session-expired", "exceeded-api-key-allowance",
+        "exceeded-account-allowance", "too-many-session",
+    )):
+        return "SESSION"
+    if "allowance" in code or "quota" in code:
+        return "RATE_QUOTA"
+    return "BROKER_UNAVAILABLE"
+
+
 @dataclass(frozen=True)
 class IGAccount:
     account_id: str
@@ -192,7 +214,12 @@ class IGDemoClient:
     def historical_prices(
         self, epic: str, *, resolution: str = "MINUTE_15", count: int = 500
     ) -> list[dict[str, Any]]:
-        """Read completed historical prices from IG demo; never places an order."""
+        """Legacy read path, disabled unless an administrator explicitly opts in."""
+        if not getattr(getattr(self, "settings", None), "ig_historical_data_enabled", True):
+            raise IGDemoUnavailable(
+                "IG historical data is disabled; use Dukascopy gap recovery",
+                error_code="IG_HISTORICAL_DISABLED_BY_POLICY",
+            )
         self._validate_cfd_epic(epic)
         if resolution not in {"MINUTE_5", "MINUTE_15"}:
             raise ValueError("Unsupported historical resolution")
@@ -224,7 +251,12 @@ class IGDemoClient:
         self, epic: str, *, resolution: str = "MINUTE_5", page_size: int = 500,
         page_number: int = 1,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Read one explicit IG v3 history page so callers can enforce a quota budget."""
+        """Legacy paged path, disabled unless an administrator explicitly opts in."""
+        if not getattr(getattr(self, "settings", None), "ig_historical_data_enabled", True):
+            raise IGDemoUnavailable(
+                "IG historical data is disabled; use Dukascopy gap recovery",
+                error_code="IG_HISTORICAL_DISABLED_BY_POLICY",
+            )
         self._validate_cfd_epic(epic)
         if resolution != "MINUTE_5":
             raise ValueError("Canonical backfill must use MINUTE_5")
@@ -243,7 +275,12 @@ class IGDemoClient:
         self, epic: str, *, start_utc: datetime, end_utc: datetime,
         resolution: str = "MINUTE_5", page_size: int = 64,
     ) -> list[dict[str, Any]]:
-        """Read one exact bounded UTC gap window; never substitute the newest page."""
+        """Legacy range path, disabled unless an administrator explicitly opts in."""
+        if not getattr(getattr(self, "settings", None), "ig_historical_data_enabled", True):
+            raise IGDemoUnavailable(
+                "IG historical data is disabled; use Dukascopy gap recovery",
+                error_code="IG_HISTORICAL_DISABLED_BY_POLICY",
+            )
         self._validate_cfd_epic(epic)
         if resolution != "MINUTE_5" or page_size < 1 or page_size > 500:
             raise ValueError("Invalid bounded historical range request")

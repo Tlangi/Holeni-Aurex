@@ -6,6 +6,7 @@
 |---|---|---|
 | Owner web | `AurexWeb` | Angular 21 production application on `127.0.0.1:4210` |
 | Platform API | `AurexPlatformAPI` | Localhost API on `127.0.0.1:8010` |
+| Owner summaries | `AurexOwnerOverviewAPI` | Authenticated, GET-only readiness and market summaries on `127.0.0.1:8011`; no trading scheduler |
 | Market stream | `AurexMarketStream` | IG Lightstreamer M5 capture and M15 aggregation |
 | Trading worker | `AurexTradingWorker` | Rules, readiness, intelligence and shadow lifecycle |
 | Health monitor | `AurexHealthMonitor` | Health persistence and owner email alerts |
@@ -18,6 +19,13 @@ are suppressed; warnings and failures remain in rotating files under
 `apps/web/logs` and `services/platform-api/logs`. The production web service
 same-origin proxies only `/api` and `/health` to FastAPI; it does not expose SQL
 Server or IG credentials.
+
+The IIS site routes only `/api/v1/owner/readiness` and `/api/v1/owner/markets`
+to `AurexOwnerOverviewAPI`; other `/api` routes remain on `AurexPlatformAPI`.
+This isolates the read-only owner summaries from in-progress API/trading changes.
+If the overview service is unavailable, the web UI falls back to existing
+read-only trading/model status and marks quotes or eligibility unverified. Do
+not restart `AurexPlatformAPI` merely to refresh these two endpoints.
 
 The health monitor also generates one audited progress email per tenant and
 South African calendar day after 18:00 SAST. It uses
@@ -33,7 +41,7 @@ Run from `C:\Projects\Forex\services\platform-api`:
 ```powershell
 .\.venv\Scripts\python.exe scripts\operational_status.py
 Invoke-RestMethod http://127.0.0.1:8010/health/ready
-Get-Service AurexWeb,AurexPlatformAPI,AurexMarketStream,AurexTradingWorker,AurexHealthMonitor
+Get-Service AurexWeb,AurexPlatformAPI,AurexOwnerOverviewAPI,AurexMarketStream,AurexTradingWorker,AurexHealthMonitor
 Invoke-RestMethod http://127.0.0.1:4210/_health
 ```
 
@@ -105,6 +113,11 @@ Manual verification:
 Do not point these scripts at another database or a broad filesystem location.
 
 ## Incident controls
+
+For a stale `ig_demo` account-sync heartbeat, follow the isolated backend
+release gate in [ACCOUNT_SYNC_BACKEND_RELEASE_GATE.md](ACCOUNT_SYNC_BACKEND_RELEASE_GATE.md).
+Do not restart `AurexPlatformAPI` from this shared checkout while unrelated
+trading changes remain uncommitted.
 
 - Pause new hypothetical cycles from the owner UI or engine-control API; this
   cannot enable broker orders.
@@ -281,11 +294,15 @@ test exist. Destructive retention execution remains an explicit later operation.
 
 ## Profit-protection interpretation
 
-Aurex has no daily profit quota. `preferred_daily_return_pct` is retained only
-as a legacy database column and is exposed as no objective. Model signals must
+Aurex has no daily profit quota. `DAILY_PROFIT_TARGET_ENABLED` is permanently
+false and startup fails closed if an environment attempts to enable it.
+`preferred_daily_return_pct`, `daily_profit_lock_pct` and
+`profit_giveback_limit_pct` are obsolete legacy database columns with no entry,
+sizing or confidence-threshold authority. Model signals must
 remain cost-aware and may produce HOLD for an entire day. The daily risk ledger
 uses native IG account equity for return, peak and drawdown decisions; converted
 ZAR values remain available for owner reporting. Once the configured gain
 activation threshold is reached, risk is reduced for the rest of that South
-African trading day. Excessive giveback, daily loss, peak drawdown, consecutive
-losses and reconciliation failures block new entries.
+African trading day. A strong day cannot itself stop a valid new opportunity.
+Daily loss, peak drawdown, exposure, consecutive losses and reconciliation
+failures can block new entries.

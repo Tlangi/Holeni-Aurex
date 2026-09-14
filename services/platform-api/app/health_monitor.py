@@ -34,6 +34,48 @@ class HealthIssue:
     detail: str
 
 
+def component_requires_attention(status: str, *, stale: bool, code: str,
+                                 sessions_evaluated: bool, any_open_session: bool) -> bool:
+    """A closed market does not need a fresh candle heartbeat to stay healthy.
+
+    Explicit non-healthy component states always alert. Other components keep
+    their normal heartbeat requirement, and an unknown calendar never suppresses
+    a stale feed alert.
+    """
+    if status not in {"CURRENT", "HEALTHY"}:
+        return True
+    if code in {"market_feed", "ig_demo"} and sessions_evaluated and not any_open_session:
+        return False
+    return stale
+
+
+def component_stale_after(code: str, settings: Settings) -> timedelta:
+    """Allow a scheduled macro check two cycles; keep other heartbeat limits."""
+    if code == "macro_intelligence":
+        return timedelta(seconds=max(20 * 60, 2 * settings.macro_sync_seconds))
+    return timedelta(minutes=20)
+
+
+def component_attention_message(code: str, status: str, detail: str,
+                                checked: datetime | None, *, stale: bool) -> tuple[str, str]:
+    if stale and status in {"CURRENT", "HEALTHY"}:
+        summary = ("IG Demo account sync has not refreshed" if code == "ig_demo"
+                   else f"Aurex component heartbeat is stale: {code}")
+        owner_action = (
+            "Inspect the Shadow worker's official-source sync; macro decisions remain unverified."
+            if code == "macro_intelligence" else
+            "Inspect the account-sync worker; do not infer broker health from the stored status."
+            if code == "ig_demo" else
+            "Inspect the responsible component worker and its latest successful run."
+        )
+        explanation = (f"Last successful check: {dual_time(checked)}. "
+                       "Trading readiness is unverified until this component refreshes. "
+                       f"{owner_action}")
+        return summary, explanation
+    return (f"Aurex component requires attention: {code}",
+            f"status={status}; detail={detail}; checked={checked}")
+
+
 def _web_health_url(settings: Settings) -> str:
     if settings.app_env.lower() == "production":
         external = next((origin for origin in settings.allowed_origins
@@ -76,16 +118,7 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                    FROM app.platform_components
                    WHERE component_code IN ('ig_demo','market_feed','risk_engine','trading_engine','macro_intelligence')"""
             )
-            for component in cursor.fetchall():
-                checked = component["checked_at_utc"]
-                stale = checked is None or checked < now - timedelta(minutes=20)
-                if str(component["status"]) not in {"CURRENT", "HEALTHY"} or stale:
-                    code = str(component["component_code"])
-                    issues.append(HealthIssue(
-                        f"component.{code}", "CRITICAL" if code in {"market_feed", "risk_engine"} else "WARNING",
-                        f"Aurex component requires attention: {code}",
-                        f"status={component['status']}; detail={component['status_detail']}; checked={checked}",
-                    ))
+            components = cursor.fetchall()
             cursor.execute(
                 """SELECT m.symbol,m.calendar_code,m.market_timezone,m.session_open_local,
                           m.session_close_local,MAX(c.open_time_utc) latest_open,
@@ -100,7 +133,10 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                             m.session_open_local,m.session_close_local"""
             )
             stale_markets: list[tuple[str, object, object]] = []
+            sessions_evaluated = False
+            any_open_session = False
             for market in cursor.fetchall():
+                sessions_evaluated = True
                 latest_open = market["latest_open"]
                 latest_close = market["latest_close"]
                 cursor.execute(
@@ -116,6 +152,7 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     session_close=market["session_close_local"],
                     holidays=holidays,
                 )
+                any_open_session = any_open_session or session.should_receive_data
                 # Feed health follows the current streaming heartbeat. Completed
                 # candles remain the authority for models and execution, but IG's
                 # CONS_END marker can lag while current price updates are healthy.
@@ -133,6 +170,22 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     freshness=timedelta(seconds=settings.execution_m5_fresh_seconds),
                 ):
                     stale_markets.append((str(market["symbol"]), latest_open, latest_close, session))
+            for component in components:
+                checked = component["checked_at_utc"]
+                code = str(component["component_code"])
+                stale = checked is None or checked < now - component_stale_after(code, settings)
+                status = str(component["status"])
+                if component_requires_attention(
+                    status, stale=stale, code=code,
+                    sessions_evaluated=sessions_evaluated, any_open_session=any_open_session,
+                ):
+                    summary, detail = component_attention_message(
+                        code, status, str(component["status_detail"]), checked, stale=stale,
+                    )
+                    issues.append(HealthIssue(
+                        f"component.{code}", "CRITICAL" if code in {"market_feed", "risk_engine"} else "WARNING",
+                        summary, detail,
+                    ))
             if len(stale_markets) == 1:
                 symbol, latest_open, latest_close, session = stale_markets[0]
                 issues.append(HealthIssue(
@@ -233,11 +286,21 @@ def _send_email(settings: Settings, issues: list[HealthIssue]) -> bool:
         logger.warning("Operational alert email is not configured")
         return False
     try:
+        from app.email_delivery import aurex_email_html
+        severity = "CRITICAL" if any(item.severity == "CRITICAL" for item in issues) else "WARNING"
         send_email(
             settings, recipient=recipient,
             subject=f"Aurex operational alert ({len(issues)})",
             plain_text="\n\n".join(
                 f"[{item.severity}] {item.summary}\n{item.detail}" for item in issues
+            ),
+            html=aurex_email_html(
+                title=f"{len(issues)} operational item{'s' if len(issues) != 1 else ''} need attention",
+                eyebrow=f"{severity} · system health",
+                summary="Aurex detected conditions that may affect data quality or trading readiness.",
+                details=[(f"{item.severity} · {item.summary}", item.detail) for item in issues],
+                action_label="Open Aurex operations", action_url="https://holeniaurex.co.za/",
+                severity=severity,
             ),
         )
         return True

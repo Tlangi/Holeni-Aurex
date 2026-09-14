@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.database import open_database
+from app.model_governance_status import MODEL_GOVERNANCE_STAGE_SQL, model_governance_blocker
 
 
 def read_trading_status(settings: Settings, tenant_id: str) -> dict[str, object]:
@@ -39,6 +40,27 @@ def read_trading_status(settings: Settings, tenant_id: str) -> dict[str, object]
             (tenant_id,),
         )
         intents = cursor.fetchone() or {}
+        cursor.execute(
+            f"""SELECT m.market_id,m.symbol,
+                      {MODEL_GOVERNANCE_STAGE_SQL},
+                      d.decision,d.executable,d.blocker_code,d.generated_at_utc
+               FROM app.markets m
+               OUTER APPLY (SELECT TOP(1) decision,executable,blocker_code,generated_at_utc
+                 FROM app.market_decisions d WHERE d.tenant_id=%s AND d.market_id=m.market_id
+                 ORDER BY d.generated_at_utc DESC) d
+               WHERE m.enabled=1 AND m.signal_enabled=1 AND m.demo_trading_enabled=1
+               ORDER BY m.symbol""", (tenant_id,),
+        )
+        shadow_evaluations = [{
+            "symbol": str(row["symbol"]),
+            "status": "WAITING_FOR_SIGNAL" if bool(row["governed_model"]) else "BLOCKED",
+            "reason": (row.get("blocker_code") or "NO_COMBINED_EDGE")
+                      if bool(row["governed_model"])
+                      else model_governance_blocker(row),
+            "decision": row.get("decision"),
+            "evaluated_at_utc": row["generated_at_utc"].isoformat()
+                                if row.get("generated_at_utc") else None,
+        } for row in cursor.fetchall()]
 
     return {
         "environment": "DEMO",
@@ -49,6 +71,7 @@ def read_trading_status(settings: Settings, tenant_id: str) -> dict[str, object]
         "markets": markets,
         "shadow_intents": int(intents.get("shadow_intents") or 0),
         "active_intents": int(intents.get("active_intents") or 0),
+        "shadow_evaluations": shadow_evaluations,
         "gates": {
             "live_trading_supported": False,
             "requires_validated_model": True,

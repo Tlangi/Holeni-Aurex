@@ -16,6 +16,7 @@ from app.research_protocol import (
     cost_stress_evidence,
     development_only_calibrated_probabilities,
     leakage_boundary_audit,
+    predeclared_trade_eligibility,
     selective_walk_forward_evaluate,
     selective_directions,
     target_catalog,
@@ -97,6 +98,22 @@ def test_bootstrap_and_cost_stress_are_deterministic_and_cost_aware() -> None:
         "SPREAD_P50", "SPREAD_P75", "SPREAD_P90", "SPREAD_P95",
         "P95_PLUS_SLIPPAGE", "P95_DELAY_ONE_CANDLE", "P95_OVERNIGHT_FUNDING",
     }
+
+
+def test_predeclared_opportunity_policy_is_causal_and_forces_noneligible_hold() -> None:
+    data = build_selective_target(_frame(1000), TARGET_CATALOG["USDJPY"][0], configured_cost_bps=1.0)
+    policy = {
+        "sessions": ["LONDON_NEW_YORK_OVERLAP"],
+        "trend_regimes": ["STRONG_UPTREND"],
+        "volatility_regimes": ["HIGH", "EXTREME"],
+        "regime_combine": "ANY",
+    }
+    first = predeclared_trade_eligibility(data, "USDJPY", policy)
+    changed_future = data.copy()
+    changed_future["future_return"] = changed_future["future_return"] * -100
+    second = predeclared_trade_eligibility(changed_future, "USDJPY", policy)
+    assert np.array_equal(first, second)
+    assert 0 < int(first.sum()) < len(first)
 
 
 def test_candidate_lifecycle_rejects_skips() -> None:

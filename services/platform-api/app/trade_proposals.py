@@ -14,8 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.auth import AuthenticatedUser
 from app.config import Settings
 from app.database import open_database
-from app.email_delivery import send_email
+from app.email_delivery import aurex_email_html, send_email
 from app.tradingagents_adapter import reject_secrets
+
+PROPOSAL_APPROVAL_WINDOW_SECONDS = 300
 
 
 OWNER_ROLES = frozenset({"owner", "administrator", "admin"})
@@ -48,6 +50,8 @@ class TradeProposalCreate(BaseModel):
             raise ValueError("timestamps must be timezone-aware")
         if self.data_cutoff_utc > self.decision_time_utc or self.expires_at_utc <= self.decision_time_utc:
             raise ValueError("invalid proposal time boundary")
+        if (self.expires_at_utc - self.decision_time_utc).total_seconds() > PROPOSAL_APPROVAL_WINDOW_SECONDS:
+            raise ValueError("approval window exceeds safe maximum")
         valid_levels = (
             self.direction == "BUY" and self.stop_price < self.entry_price < self.target_price
         ) or (
@@ -97,7 +101,11 @@ def create_trade_proposal(settings: Settings, tenant_id: str, body: TradeProposa
              SELECT %s,%s,m.market_id,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING_OWNER',%s,%s,%s,%s
              FROM app.markets m WHERE m.symbol=%s AND m.research_enabled=1
              AND EXISTS(SELECT 1 FROM app.model_versions v WHERE v.model_version_id=%s
-                  AND v.market_id=m.market_id AND v.status IN ('OWNER_APPROVED','VALIDATED'))
+                  AND v.market_id=m.market_id AND v.demo_experiment_eligible=1
+                  AND v.status IN ('CANDIDATE','DEVELOPMENT_PASSED','HOLDOUT_PASSED','OWNER_APPROVED','VALIDATED','REJECTED'))
+             AND NOT EXISTS(SELECT 1 FROM app.trade_proposals pending
+                  WHERE pending.tenant_id=%s AND pending.status='PENDING_OWNER'
+                    AND pending.expires_at_utc>SYSUTCDATETIME())
              AND (%s IS NULL OR EXISTS(SELECT 1 FROM app.trading_agent_runs r WHERE r.run_id=%s
                   AND r.market_id=m.market_id AND r.status='SUCCEEDED' AND r.data_cutoff_utc<=%s))""",
             (proposal_id, tenant_id, str(body.trading_agent_run_id) if body.trading_agent_run_id else None,
@@ -106,7 +114,8 @@ def create_trade_proposal(settings: Settings, tenant_id: str, body: TradeProposa
              body.decision_time_utc.astimezone(timezone.utc), body.data_cutoff_utc.astimezone(timezone.utc),
              body.expires_at_utc.astimezone(timezone.utc), body.rationale_summary,
              json.dumps(body.evidence, sort_keys=True), body.input_snapshot_sha256, digest, body.market,
-             str(body.model_version_id), str(body.trading_agent_run_id) if body.trading_agent_run_id else None,
+             str(body.model_version_id), tenant_id,
+             str(body.trading_agent_run_id) if body.trading_agent_run_id else None,
              str(body.trading_agent_run_id) if body.trading_agent_run_id else None,
              body.data_cutoff_utc.astimezone(timezone.utc)))
         if cursor.rowcount != 1:
@@ -125,6 +134,15 @@ def notify_trade_proposal(settings: Settings, tenant_id: str, proposal_id: str) 
                 settings, recipient=recipient, subject="Aurex trade proposal awaiting review",
                 plain_text="A new Aurex research proposal is awaiting review. Sign in to Holeni Aurex "
                            "and open Trading activity > Trade proposals. This email cannot approve or submit a trade.",
+                html=aurex_email_html(
+                    title="A trade proposal is ready for review",
+                    eyebrow="Owner approval required",
+                    summary="Aurex found a model-aligned opportunity that passed the shadow risk checks. Review it in the platform before it expires.",
+                    details=[("Environment", "IG Demo"), ("Submission", "Not submitted"),
+                             ("Next step", "Approve or decline in Aurex")],
+                    action_label="Review trade proposal", action_url="https://holeniaurex.co.za/",
+                    severity="INFO",
+                ),
             )
             status = "SENT"
         except Exception:
@@ -146,11 +164,13 @@ def read_trade_proposals(settings: Settings, tenant_id: str, limit: int = 50) ->
         cursor.execute("""SELECT TOP (%s) p.trade_proposal_id,m.symbol market,p.direction,p.confidence,
             p.proposed_size,p.entry_price,p.stop_price,p.target_price,p.risk_zar,p.horizon_minutes,
             p.decision_time_utc,p.data_cutoff_utc,p.expires_at_utc,p.status,p.rationale_summary,
-            p.notification_status,p.decided_at_utc,p.decision_reason,p.created_at_utc
+            p.notification_status,p.decided_at_utc,p.decision_reason,p.created_at_utc,p.evidence_json
             FROM app.trade_proposals p JOIN app.markets m ON m.market_id=p.market_id
             WHERE p.tenant_id=%s ORDER BY CASE WHEN p.status='PENDING_OWNER' THEN 0 ELSE 1 END,p.created_at_utc DESC""",
                        (min(max(limit, 1), 100), tenant_id))
         proposals = cursor.fetchall()
+        for proposal in proposals:
+            proposal["evidence"] = json.loads(proposal.pop("evidence_json"))
         connection.commit()
     return {"status": "OWNER_REVIEW", "execution_authority": "NONE_UNTIL_SEPARATE_GOVERNED_SUBMISSION",
             "count": len(proposals), "proposals": proposals}

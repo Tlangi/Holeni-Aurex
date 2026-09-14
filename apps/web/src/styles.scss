@@ -425,6 +425,14 @@ html { scroll-behavior: smooth; }
 }
 
 @media (max-width: 620px) {
+  .app-shell, .workspace, .dashboard { min-width: 0; max-width: 100%; }
+  .app-shell { overflow-x: clip; }
+  .dashboard-grid, .operational-grid, .panel, .history-table { min-width: 0; max-width: 100%; }
+  .history-table { overflow-x: auto; overscroll-behavior-inline: contain; }
+  .topbar { min-width: 0; }
+  .workspace-title { flex: 1 1 auto; overflow: hidden; }
+  .workspace-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-actions { flex: 0 0 auto; }
   .topbar { height: 62px; }
   .search-box { flex: 1; width: auto; }
   .trading-status span:nth-child(2), .profile-button, .notification-button { display: none; }
