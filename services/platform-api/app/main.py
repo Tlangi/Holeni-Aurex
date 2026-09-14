@@ -62,7 +62,6 @@ from app.auth import (
 )
 from app.observability import CorrelationLoggingMiddleware, configure_logging
 from app.operations_status import read_operational_assurance
-from app.owner_overview import read_market_summary, read_owner_readiness
 from app.scheduler import AccountSyncScheduler
 from app.trading_status import read_trading_status
 from app.shadow_performance import read_daily_shadow_performance
@@ -245,28 +244,6 @@ def dashboard(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
             content=dashboard_unavailable_payload(settings),
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
-
-
-@app.get("/api/v1/owner/readiness", tags=["dashboard"])
-def owner_readiness(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
-    """Compact, read-only owner status; no execution authority is inferred."""
-    try:
-        return JSONResponse(content=read_owner_readiness(settings, user.tenant_id))
-    except DatabaseUnavailable:
-        return JSONResponse(content={"overall_health": "OFFLINE", "blocking_reasons": [
-            {"code": "DATABASE_UNAVAILABLE", "message": "Platform data is unavailable.", "action": "View System"},
-        ]}, status_code=503)
-
-
-@app.get("/api/v1/owner/markets", tags=["markets"])
-def owner_market_summary(user: AuthenticatedUser = Depends(require_user)) -> JSONResponse:
-    """Batched current IG M5 quotes; research providers cannot supply execution prices."""
-    try:
-        return JSONResponse(content=read_market_summary(settings, user.tenant_id))
-    except PermissionError as exc:
-        return JSONResponse(content={"status": "forbidden", "message": str(exc)}, status_code=403)
-    except DatabaseUnavailable:
-        return JSONResponse(content={"status": "unavailable", "markets": []}, status_code=503)
 
 
 @app.get("/api/v1/trading/status", tags=["trading"])

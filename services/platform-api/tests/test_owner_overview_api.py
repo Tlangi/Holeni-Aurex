@@ -7,6 +7,14 @@ from app.auth import AuthenticatedUser
 from app.owner_overview_api import app, markets, owner_session, readiness
 
 
+def test_owner_summary_routes_live_only_in_read_only_service():
+    from app.main import app as trading_api
+
+    summary_paths = {"/api/v1/owner/readiness", "/api/v1/owner/markets"}
+    assert summary_paths <= set(app.openapi()["paths"])
+    assert summary_paths.isdisjoint(trading_api.openapi()["paths"])
+
+
 def _request(cookie: str = "") -> Request:
     headers = [(b"cookie", f"aurex_session={cookie}".encode())] if cookie else []
     return Request({"type": "http", "method": "GET", "path": "/", "headers": headers})
