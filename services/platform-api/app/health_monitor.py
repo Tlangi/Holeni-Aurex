@@ -44,7 +44,7 @@ def component_requires_attention(status: str, *, stale: bool, code: str,
     """
     if status not in {"CURRENT", "HEALTHY"}:
         return True
-    if code in {"market_feed", "ig_demo"} and sessions_evaluated and not any_open_session:
+    if code == "market_feed" and sessions_evaluated and not any_open_session:
         return False
     return stale
 

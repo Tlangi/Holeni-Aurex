@@ -5,10 +5,16 @@ from app.config import Settings
 from app.health_monitor import component_attention_message, component_requires_attention, component_stale_after
 
 
-@pytest.mark.parametrize("code", ["market_feed", "ig_demo"])
-def test_stale_current_feed_is_not_an_incident_while_markets_closed(code):
+def test_stale_current_feed_is_not_an_incident_while_markets_closed():
     assert not component_requires_attention(
-        "CURRENT", stale=True, code=code,
+        "CURRENT", stale=True, code="market_feed",
+        sessions_evaluated=True, any_open_session=False,
+    )
+
+
+def test_stale_account_sync_still_alerts_while_markets_closed():
+    assert component_requires_attention(
+        "CURRENT", stale=True, code="ig_demo",
         sessions_evaluated=True, any_open_session=False,
     )
 
