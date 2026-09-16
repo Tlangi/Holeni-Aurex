@@ -1,0 +1,24 @@
+{
+  "authority": "PRE_REGISTERED_NONPROMOTABLE_RESEARCH_AMENDMENT",
+  "amends_protocol_sha256": "1a4f0ba916b92476f7091ba84ff7a48b7a89e2a80a70e1564a59ee6535ef50e7",
+  "amendment_version": "AUREX_EXECUTABLE_ECONOMIC_PROTOCOL_V1_ATR14_SMA_AMENDMENT",
+  "registered_on_utc_date": "2026-09-16",
+  "reason": "The original protocol fixed ATR multiples but omitted the ATR formula and lookback. This amendment fixes those details before any executable economic outcome is calculated.",
+  "outcome_access_before_amendment": false,
+  "atr": {
+    "timeframe": "M15",
+    "periods": 14,
+    "formula": "simple arithmetic mean of the latest 14 true ranges; true range is max(high-low, abs(high-previous_close), abs(low-previous_close)) and therefore requires 15 contiguous completed M15 candles",
+    "availability": "every source candle must have completed and been ingested no later than decision_at_utc",
+    "source": "one canonical source across the 15-candle window; source transition, gap, invalid OHLC or missing availability is UNVERIFIABLE",
+    "rounding": "no intermediate rounding; broker price precision only applies at a future order boundary"
+  },
+  "cost_clarification": {
+    "commission": "zero explicit commission only for broker-classified non-share spread-priced FX, index and commodity CFDs supported by official IG South Africa product terms",
+    "financing": "exclude an opportunity from every policy family if its conservative maximum holding window intersects 22:00 Europe/London; do not estimate a variable overnight rate",
+    "slippage": "retain the original development-only per-market 75th and 95th percentile spread sensitivity assumptions"
+  },
+  "holdout_accessed": false,
+  "economic_outcomes_calculated": false,
+  "model_training_performed": false
+}

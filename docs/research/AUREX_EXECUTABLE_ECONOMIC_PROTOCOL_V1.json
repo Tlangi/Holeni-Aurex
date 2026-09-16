@@ -1,0 +1,57 @@
+{
+  "authority": "PRE_REGISTERED_NONPROMOTABLE_RESEARCH",
+  "protocol_version": "AUREX_EXECUTABLE_ECONOMIC_PROTOCOL_V1",
+  "registered_on_utc_date": "2026-09-15",
+  "markets": ["AUDJPY", "EURJPY", "EURUSD", "GBPJPY", "GBPUSD", "GERMANY40", "USDJPY", "USDZAR", "XAUUSD"],
+  "decision_universe": {
+    "definition": "all completed PASS regular-session M15 candles per market, independent of prior model score or BUY/SELL/HOLD decision",
+    "decision_time": "no earlier than both M15 completion UTC and its observed ingestion/availability UTC; missing availability makes the feature snapshot UNVERIFIABLE",
+    "feature_version": "M1_M5_M15_EXECUTABLE_POINT_IN_TIME_V1_RESEARCH",
+    "entry_policy_version": "FIRST_BROKER_M1_OPEN_AT_OR_AFTER_DECISION_V1",
+    "execution_source": "completed PASS IG_LIGHTSTREAMER M1 bid/ask only",
+    "unverifiable_policy": "missing or invalid broker M1, post-decision or missing feature availability, source transition, intrabar ambiguity, or unknown cost never becomes a loss, profit or NO_TRADE label"
+  },
+  "label_version": "EXECUTABLE_TRADE_OUTCOME_M1_V1_RESEARCH",
+  "comparison_label": "FUTURE_CLOSE_DIRECTION_4_M15_V2",
+  "directions": ["LONG", "SHORT", "NO_TRADE"],
+  "policy_families": [
+    {"id": "ATR_STOP_1_TARGET_1_5R_60M_V1", "stop_atr_multiple": 1.0, "target_r_multiple": 1.5, "max_holding_minutes": 60},
+    {"id": "ATR_STOP_1_5_TARGET_2R_120M_V1", "stop_atr_multiple": 1.5, "target_r_multiple": 2.0, "max_holding_minutes": 120},
+    {"id": "ATR_STOP_2_TARGET_1_5R_120M_V1", "stop_atr_multiple": 2.0, "target_r_multiple": 1.5, "max_holding_minutes": 120}
+  ],
+  "policy_selection": {
+    "rule": "choose at most one policy family per market using development data only; report all pre-registered families, including losing and unverifiable cohorts",
+    "untouched_holdout_tuning": "PROHIBITED",
+    "same_m1_both_barriers": "UNVERIFIABLE, never favorable first hit",
+    "market_or_session_close": "exit at last complete executable regular-session M1 close if declared; otherwise UNVERIFIABLE",
+    "minimum_stop_distance": "must satisfy current authoritative IG rule; otherwise broker eligibility remains blocked"
+  },
+  "cost_policy": {
+    "version": "MARKET_SPECIFIC_OBSERVED_SPREAD_CFD_COST_V1",
+    "spread": "executable bid/ask entry and exit in each complete IG M1 path",
+    "slippage_normal": "0.25 times that market's development-only 75th-percentile IG M1 close spread bps, per side; sensitivity assumption, not an observed fill",
+    "slippage_stressed": "1.0 times that market's development-only 95th-percentile IG M1 close spread bps, per side; sensitivity assumption, not an observed fill",
+    "commission": "use instrument/account-specific broker contract evidence; unknown yields UNVERIFIABLE net result",
+    "financing": "charge only at a broker-authoritative rollover crossing; unknown rollover/rate yields UNVERIFIABLE if holding crosses it",
+    "minimum_deal_size_margin_size_increment": "record authoritative market/account dealing rules separately from per-unit research return; non-authoritative increment blocks order eligibility",
+    "gross_net": "report gross executable return before explicit CFD fees and net after all declared costs; never fabricate an exact stop/target exit-mid spread decomposition",
+    "positive_claim": "PF > 1 and net expectancy > 0 on identical immutable cohort with authoritative or conservative upper-bound cost evidence, chronological validation and untouched holdout"
+  },
+  "chronology": {
+    "development_start_utc": "2026-09-07T00:00:00Z",
+    "validation_start_utc": "2026-09-16T00:00:00Z",
+    "untouched_holdout_start_utc": "2026-09-23T00:00:00Z",
+    "purge_before_each_boundary_minutes": 120,
+    "embargo_after_each_boundary_minutes": 120,
+    "outcome_horizon_max_minutes": 120,
+    "boundary_change_policy": "a changed boundary requires a new protocol version before accessing that partition"
+  },
+  "cohort_gate": {
+    "recorded_market_decision_path_inventory": "coverage evidence only; old-model BUY/SELL/HOLD selection cannot define a new training universe",
+    "minimum_complete_ig_paths_per_market": 30,
+    "feature_and_outcome_hashes": "required per decision/policy/direction",
+    "model_training_now": "BLOCKED until complete M15 decision universe, IG M1 paths, cost authority and immutable cohort exist",
+    "model_promotion": "NONE",
+    "shadow_evidence": "prospective only, after a governed candidate"
+  }
+}

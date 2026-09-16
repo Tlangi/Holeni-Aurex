@@ -1,0 +1,20 @@
+{
+  "authority": "COST_EVIDENCE_GAP_REGISTER",
+  "version": "AUREX_CFD_COST_EVIDENCE_GAPS_V1",
+  "protocol_sha256": "1a4f0ba916b92476f7091ba84ff7a48b7a89e2a80a70e1564a59ee6535ef50e7",
+  "scope": "IG Demo account and the nine-market Aurex research universe",
+  "interpretation": "UNVERIFIED means no instrument/account-specific broker contract evidence is frozen. It must not be converted to zero.",
+  "observed_spread": "AUTHORITATIVE_IN_FROZEN_IG_M1_QUOTES",
+  "slippage": "PRE_REGISTERED_SENSITIVITY_ASSUMPTION_ONLY",
+  "markets": {
+    "AUDJPY": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "EURJPY": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "EURUSD": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "GBPJPY": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "GBPUSD": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "GERMANY40": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "USDJPY": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "USDZAR": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"},
+    "XAUUSD": {"commission": "UNVERIFIED", "financing": "UNVERIFIED"}
+  }
+}

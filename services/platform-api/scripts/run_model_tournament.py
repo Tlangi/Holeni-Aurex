@@ -11,6 +11,7 @@ sys.path.insert(0, str(API_ROOT))
 from app.config import get_settings  # noqa: E402
 from app.database import open_database  # noqa: E402
 from app.model_tournament import run_and_record_tournament  # noqa: E402
+from app.prospective_accumulation import require_prospective_training_gate  # noqa: E402
 
 
 if __name__ == "__main__":
@@ -38,6 +39,8 @@ if __name__ == "__main__":
     results = {}
     for market in markets:
         try:
+            with open_database(settings) as connection:
+                require_prospective_training_gate(connection, market)
             result = run_and_record_tournament(
                 settings, str(tenant[0]), market, notes=arguments.notes,
             )

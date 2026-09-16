@@ -1,0 +1,693 @@
+{
+  "authority": "IMMUTABLE_NONPROMOTABLE_PROSPECTIVE_JOIN_SNAPSHOT",
+  "join_version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+  "protocol_sha256": "cf60cf9ca8b96714edbce5d6abb2a5ff9ea56fa4205335f1736114e741d0657b",
+  "captured_at_utc": "2026-09-16T08:02:07.028263+00:00",
+  "minimum_joined_per_market": 30,
+  "historical_rows_rewritten": false,
+  "validation_accessed": false,
+  "holdout_accessed": false,
+  "economic_outcomes_calculated": false,
+  "model_training_performed": false,
+  "broker_submission_authority": false,
+  "markets": [
+    {
+      "market": "AUDJPY",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "EURJPY",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "EURUSD",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "GBPJPY",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "GBPUSD",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "GERMANY40",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "USDJPY",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "USDZAR",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    },
+    {
+      "market": "XAUUSD",
+      "prospective_m15": 3,
+      "joined_opportunities": 0,
+      "target_reached": false,
+      "reasons": {
+        "ATR:INSUFFICIENT_COMPLETED_BARS": 3
+      }
+    }
+  ],
+  "opportunities": [
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "AUDJPY",
+      "decision_at_utc": "2026-09-16T07:30:00+00:00",
+      "m15_candle_id": 862867,
+      "opportunity_id": "64bb19f715be23dfb16d8e4bcd935ff255b2dcc30dbed9c4cb8f93a17f1e0038",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "AUDJPY",
+      "decision_at_utc": "2026-09-16T07:45:00+00:00",
+      "m15_candle_id": 863047,
+      "opportunity_id": "090fb226bf5bb74bb6bbd9bc050ff07d510df16a444c846be048d36190783c4d",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "AUDJPY",
+      "decision_at_utc": "2026-09-16T08:00:03.524000+00:00",
+      "m15_candle_id": 863218,
+      "opportunity_id": "dd4a23fb6251bf2822ec23c67b6167e0b1aeda178e9da8b712fe89b1a49c4d53",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "EURJPY",
+      "decision_at_utc": "2026-09-16T07:30:05.346000+00:00",
+      "m15_candle_id": 862875,
+      "opportunity_id": "7ba99342d41e7ee176f78210c3c1ad7d864fee910b614d156da0c115547f497d",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "EURJPY",
+      "decision_at_utc": "2026-09-16T07:45:08.043000+00:00",
+      "m15_candle_id": 863056,
+      "opportunity_id": "095af4f8b31030ba51b6247f27693085f3a81830a275b716b75268ddd8fda3d5",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "EURJPY",
+      "decision_at_utc": "2026-09-16T08:00:11.139000+00:00",
+      "m15_candle_id": 863228,
+      "opportunity_id": "a1226081d25e71800fe8b8e041cfbbf1e914f1815ec61566de5295105a309bd6",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "EURUSD",
+      "decision_at_utc": "2026-09-16T07:30:10.246000+00:00",
+      "m15_candle_id": 862883,
+      "opportunity_id": "f844263f34c3ae886d421a0e79505a2c7e0e42a8ff54babba665a8bddbdb377b",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "EURUSD",
+      "decision_at_utc": "2026-09-16T07:45:10.475000+00:00",
+      "m15_candle_id": 863059,
+      "opportunity_id": "169f6a4aa0e788b20dfc9844747fab43ddc7d8e10464a9944ff16fb457afa74b",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "EURUSD",
+      "decision_at_utc": "2026-09-16T08:00:13.959000+00:00",
+      "m15_candle_id": 863233,
+      "opportunity_id": "371613211ffa4a4d7762f4ab33dcae636110b35e5145314f5a9539518cf4e8e7",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GBPJPY",
+      "decision_at_utc": "2026-09-16T07:30:13.921000+00:00",
+      "m15_candle_id": 862887,
+      "opportunity_id": "2257fa7f1f15388df3b9f08d06bdf628f20ef74468caf4c924ab71ebbeeaca74",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GBPJPY",
+      "decision_at_utc": "2026-09-16T07:45:14.740000+00:00",
+      "m15_candle_id": 863065,
+      "opportunity_id": "0918c7b4bad0f5c0a0e565ce964025b18bc6f708301502158cafca9d35a998ab",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GBPJPY",
+      "decision_at_utc": "2026-09-16T08:00:17.551000+00:00",
+      "m15_candle_id": 863238,
+      "opportunity_id": "098985958296004ba5fed75bc8f69b66de4fc0aad67be1de1a93032bb62fd88b",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GBPUSD",
+      "decision_at_utc": "2026-09-16T07:30:17.519000+00:00",
+      "m15_candle_id": 862891,
+      "opportunity_id": "0e336b0a891d46811bf51c572617eeac2827439815663857d876c3f5b69e9139",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GBPUSD",
+      "decision_at_utc": "2026-09-16T07:45:13.374000+00:00",
+      "m15_candle_id": 863062,
+      "opportunity_id": "3059df70625f253b6ae726ad349ff4f1727ec95fde0ea0489c03d1ae0a8b5409",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GBPUSD",
+      "decision_at_utc": "2026-09-16T08:00:23.598000+00:00",
+      "m15_candle_id": 863248,
+      "opportunity_id": "8537e2a64f74fc333163da727c896448d2b1554d86183e787a89b4fe2b607eb5",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GERMANY40",
+      "decision_at_utc": "2026-09-16T07:30:07.945000+00:00",
+      "m15_candle_id": 862879,
+      "opportunity_id": "3b9bcf88d2543b814e66bdb8677582aa178dda16f8177ec229ce186c2574f244",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GERMANY40",
+      "decision_at_utc": "2026-09-16T07:45:05.660000+00:00",
+      "m15_candle_id": 863053,
+      "opportunity_id": "f262c9bd4e8b5b258a214cfb7837a4380f83b8fa5150a090bcfc5c34530d8f1e",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "GERMANY40",
+      "decision_at_utc": "2026-09-16T08:00:21.845000+00:00",
+      "m15_candle_id": 863243,
+      "opportunity_id": "addd62f8ec7de65a681c1c170bc7a526292f168c43460793e0a55a7878181977",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "USDJPY",
+      "decision_at_utc": "2026-09-16T07:30:18.990000+00:00",
+      "m15_candle_id": 862895,
+      "opportunity_id": "673e5f27c1d9d1d6d99c598f7b8e723858ddf184152fa9fcafbc6e9f9d00a5e9",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "USDJPY",
+      "decision_at_utc": "2026-09-16T07:45:20.690000+00:00",
+      "m15_candle_id": 863071,
+      "opportunity_id": "fc4a4e241cc4c3c98dc3d020fb45521bea3dfc22685c462644e80652af75e720",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "USDJPY",
+      "decision_at_utc": "2026-09-16T08:00:29.963000+00:00",
+      "m15_candle_id": 863258,
+      "opportunity_id": "e991df7434362815defddbd5210dafd7c187d3b52aea7a874641b966588595ce",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "USDZAR",
+      "decision_at_utc": "2026-09-16T07:30:20.409000+00:00",
+      "m15_candle_id": 862899,
+      "opportunity_id": "5e9a6e53fa2e66b03ce9bd4e500c6aa9307020aca913d727619448cb84862752",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "USDZAR",
+      "decision_at_utc": "2026-09-16T07:45:17.206000+00:00",
+      "m15_candle_id": 863068,
+      "opportunity_id": "c59b16609ecfe72fd2b8fdd25283ca07ea82a28429a5b712239d7d710313efda",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "USDZAR",
+      "decision_at_utc": "2026-09-16T08:00:27.321000+00:00",
+      "m15_candle_id": 863253,
+      "opportunity_id": "c4b129a65cf371a308f087d6b7d0e82941621e782dc63397fd9acb4dc5d88338",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "XAUUSD",
+      "decision_at_utc": "2026-09-16T07:30:02.022000+00:00",
+      "m15_candle_id": 862871,
+      "opportunity_id": "5a059111dfeddeb39cb4a62ceb1816cb01f7fc47dbcbfe9db44adc6d76134f14",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:15:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "XAUUSD",
+      "decision_at_utc": "2026-09-16T07:45:01.162000+00:00",
+      "m15_candle_id": 863050,
+      "opportunity_id": "d1d7b68abb7b9d06ed18a4480509deccf91b340f7a6e1024a7015b682481b466",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:30:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    },
+    {
+      "version": "PROSPECTIVE_EXECUTABLE_OPPORTUNITY_JOIN_V1",
+      "market": "XAUUSD",
+      "decision_at_utc": "2026-09-16T08:00:05.859000+00:00",
+      "m15_candle_id": 863223,
+      "opportunity_id": "80079f0be6bee537125cfa025a760a33766f0b07b590b2253b3014706ca7cfc7",
+      "gates": {
+        "atr_ready": false,
+        "feature_ready": false,
+        "no_rollover": true,
+        "ig_m1_path_ready": false
+      },
+      "status": "ACCUMULATING",
+      "reason": "ATR:INSUFFICIENT_COMPLETED_BARS",
+      "atr_snapshot_sha256": null,
+      "feature_snapshot_sha256": null,
+      "ig_m1_path_sha256": null,
+      "ig_m1_complete_minutes": 0,
+      "ig_m1_first_missing_utc": null,
+      "m15_open_utc": "2026-09-16T07:45:00+00:00",
+      "m15_source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1"
+    }
+  ],
+  "snapshot_sha256": "88a713161e7d4e1efe78339b413c873ee834ad099466b83498c79243c213f480"
+}

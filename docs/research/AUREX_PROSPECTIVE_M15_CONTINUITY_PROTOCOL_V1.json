@@ -1,0 +1,27 @@
+{
+  "authority": "PRE_REGISTERED_NONPROMOTABLE_PROSPECTIVE_ACCUMULATION",
+  "version": "AUREX_PROSPECTIVE_M15_CONTINUITY_PROTOCOL_V1",
+  "registered_on_utc_date": "2026-09-16",
+  "activation": "first completed candle written by deployed source IG_LIGHTSTREAMER_M1_AGG_M15_V1; source history before deployment is not relabelled",
+  "market_universe": ["AUDJPY", "EURJPY", "EURUSD", "GBPJPY", "GBPUSD", "GERMANY40", "USDJPY", "USDZAR", "XAUUSD"],
+  "m15_authority": {
+    "source": "IG_LIGHTSTREAMER_M1_AGG_M15_V1",
+    "construction": "exactly 15 completed PASS broker-native IG Lightstreamer M1 candles",
+    "single_writer": "direct M5-to-M15 live insertion disabled",
+    "availability": "ingested_at_utc must be present and no earlier than close_time_utc",
+    "continuity": "15-minute opening timestamps must be contiguous within an eligible regular-session window",
+    "historical_rewrite": "PROHIBITED"
+  },
+  "opportunity_gate": {
+    "warmup_m15_candles": 15,
+    "required_complete_ig_m1_path_minutes": 120,
+    "rollover_policy": "exclude maximum horizon crossing 22:00 Europe/London",
+    "minimum_opportunities_per_market": 30,
+    "directions": ["LONG", "SHORT"],
+    "execution_and_cost_protocol": "AUREX_EXECUTABLE_ECONOMIC_PROTOCOL_V1 plus ATR14 amendment and IG_ZA_SPREAD_ONLY_NO_ROLLOVER_COHORT_V1"
+  },
+  "partition_policy": "This is a new prospective protocol-versioned accumulation window. It does not add rows to or rewrite the 2026-09-15 frozen development universe.",
+  "training": "BLOCKED_UNTIL_MINIMUM_REACHED",
+  "promotion": "NONE",
+  "broker_submission_authority": false
+}

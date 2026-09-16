@@ -1,0 +1,78 @@
+# Aurex economic-model remediation implementation plan — 15 September 2026
+
+## Outcome and invariant
+
+The outcome is a scientifically valid, reproducible experiment. Profitability is an empirical result, never a completion criterion. A PF above 1 or positive expectancy may be reported as governed evidence only when it is calculated from broker-native executable paths, declared CFD costs, one frozen prediction cohort, chronological validation and an untouched holdout. Trading remains fail-closed throughout research work: SHADOW, new orders disabled, no new programme, no IG submission, no model promotion from AUC alone.
+
+## Sequenced work and acceptance criteria
+
+| Step | Audit blocker | Implementation | Acceptance evidence | May run alongside |
+| --- | --- | --- | --- | --- |
+| 0. Safety baseline | B06/B07 | Snapshot engine/settings/programmes/intents/attempts; retain independent execution locks and expiry rejection tests. | Before/after state identical for trading authority; source safety tests pass. | All later research. |
+| 1. Economic outcome contract | B03 | Versioned decision identity, feature cutoff, entry policy, M1 first-hit stop/target/time/session exits, LONG/SHORT/NO_TRADE, UNVERIFIABLE and ambiguity. Keep old M15 label for comparison. | Same prediction ID yields same result; no future feature/entry or hybrid fill; synthetic path tests cover both directions, gaps, ambiguity and costs. | Steps 2, 3, 8. |
+| 2. Data authority | B04 | Per-market raw IG/hybrid/current IG execution M1/M5/M15 quality and complete prediction-path inventory. Diagnose USD/JPY duplicate lineage and GBP/USD 1/13 IG paths. Do not automatically repair execution rows. | Nine separate market reports with source/timestamp/gap/root-cause evidence; hybrid never marks execution ready. | Steps 1, 3, 8. |
+| 3. Broker rule authority | B01 | Trace actual IG market/dealing payload to extraction, persisted hash, size-step authority and execution checks. If IG exposes no step, keep false and design authoritative pre-submission validation. | Actual redacted payload-field evidence; unsupported increment rejected in tests; no fallback reclassified. | Steps 1, 2, 8. |
+| 4. Point-in-time features | B03 | Version M1/M5/M15 feature cutoffs and complete-candle joins. Include spread/microstructure only from known pre-decision candles. | Leakage tests; every feature completion time <= decision. | Steps 2, 3. |
+| 5. Frozen research cohort | B02 | Freeze eligible decisions, IG paths, costs, entry/exit policies and identity/hashes. Record missing paths as UNVERIFIABLE, not losses. Pre-register a bounded policy family using development only. | Cohort/manifest immutable and independently reproducible; no holdout read during policy choice. | After 1, 2, 4. |
+| 6. Governed tournament | B02 | Same cohort/split/features/policies through Logistic Regression, Random Forest and HGB per market. Purge outcome horizon, embargo where needed, lock holdout. Separate prediction metrics from net trading economics. | Per-market/family train/validate/holdout, gross/net, PF, expectancy, DD, calibration and regime metrics; no positive claim with PF<=1 or expectancy<=0. | Markets can evaluate independently after step 5. |
+| 7. Prospective Shadow preparation | B05 | Persist every eligible/rejected decision and zero-trade days with immutable model/feature/entry/exit/cost evidence. Backtests cannot be forwarded as Shadow. | Prospective origin timestamps, complete rejection/outcome ledger tests; no broker order authority. | After a governed candidate exists. |
+| 8. Operations/deployment | B07/B06 | Read-only version fingerprint of API/web/worker/schema/config without secrets; verify actual service release and expired programme display. | Runtime source/version parity and expiry effective status visible; no restart during research. | Steps 1–4. |
+| 9. Closure audit | All | Repeat safety state, full backend/frontend suites/build, nine-market economic table and remaining blockers. | `AUREX_ECONOMIC_MODEL_REMEDIATION_2026-09-15.md` distinguishes implemented, tested, missing-data and unverified items; no trading enabled. | After each increment and final phase. |
+
+## First implementation increment
+
+Start with step 1 while steps 2/3/8 remain evidence investigations. The new outcome evaluator is research-only and does not alter the registered `FUTURE_CLOSE_DIRECTION_4_M15_V2` model or any trading endpoint. It must return UNVERIFIABLE if broker-native M1 or a declared cost component is absent. This is valuable even with no profitable model: it prevents false positive economics. The next increment should connect the evaluator to a read-only nine-market prediction-path quality inventory and identify the GBP/USD and USD/JPY root causes before freezing a new cohort.
+
+## Increment 2 status
+
+The recorded-decision IG M1 inventory is implemented and frozen as a hash-attested coverage artifact for all nine markets. It includes every historical BUY/SELL/HOLD, including rejected and research-only decisions, but has **no label authority**. A separate `AUREX_EXECUTABLE_ECONOMIC_PROTOCOL_V1` now fixes the all-M15 opportunity universe, three bounded ATR execution families, market-specific observed-spread cost sensitivities, prospective validation/holdout boundaries and unresolved broker-fee treatment before future training. The all-M15 development-universe freeze records feature availability, complete path hashes and missing-data reasons; it does **not** claim economic outcomes or model-readiness. Steps 2 and 5 remain incomplete until full timeframe quality, broker cost authority and immutable executable net outcomes are joined to this cohort. Step 6 may not start merely because the coverage inventory contains complete paths.
+
+## Increment 3 status
+
+The frozen universe now has a separately hash-attested eligibility register. It reproduces all 4,340 development opportunities and applies gates in a fixed order: point-in-time feature snapshot, complete broker-native 120-minute path, commission authority, then financing authority. There are 471 rows with complete features and paths, but zero net-label-eligible rows because the nine-market cost evidence register explicitly records commission and financing as `UNVERIFIED`; unknown fees are not converted to zero. No outcomes were calculated, no holdout was read and no model was trained. This closes the ambiguity between data-ready and scientifically training-ready rows while leaving steps 3, 5 and 6 blocked pending broker contract evidence.
+
+## Increment 4 status
+
+Official IG South Africa product terms establish zero explicit commission for the nine non-share, spread-priced cash CFDs. Variable overnight funding is not estimated: a DST-aware gate excludes every opportunity whose conservative 120-minute window intersects 22:00 Europe/London. Before reading outcomes, an amendment fixed the previously omitted ATR definition as a 14-period simple mean of M15 true range using 15 contiguous, completed and point-in-time-available candles from one source. The immutable development outcome artifact reproduces every included IG path hash and freezes 792 evaluated results across three execution families, two directions and two cost sensitivities. Only 66 distinct opportunities survive ATR and rollover gates: EURUSD 8, GBPJPY 10, USDJPY 11, USDZAR 11 and XAUUSD 26. No market reaches 30, so training and the governed tournament remain blocked. Validation and holdout were not accessed.
+
+## Increment 5 status
+
+The live M15 source-transition cause is remediated prospectively. The market-stream worker previously allowed two writers to race for the same M15 key: a three-M5 aggregate recorded as `IG_LIGHTSTREAMER` without explicit ingestion time and a fifteen-M1 aggregate recorded as `DERIVED_M1`. Direct M5-to-M15 insertion is now disabled. The sole live authority is fifteen completed PASS broker-native M1 candles written as `IG_LIGHTSTREAMER_M1_AGG_M15_V1` with `ingested_at_utc`. Parameter-count regression coverage protects the SQL write. A preregistered prospective protocol counts warmed opportunities across separate contiguous regular-session segments and never relabels old rows. Its activation snapshot has zero new-authority candles and zero markets at the 30-opportunity target, which is expected immediately before activation. The tested worker was restarted and returned to RUNNING; SHADOW and `new_orders_enabled=false` remained unchanged.
+
+## Increment 6 status
+
+Prospective opportunity joining is implemented as a separate immutable evidence layer. Every versioned M15 candle is assessed in fixed gate order: point-in-time ATR warm-up, point-in-time M1/M5/M15 features, no 22:00 Europe/London funding crossing, and a complete later 120-minute broker-native M1 path. The join retains ATR, feature and path hashes and cannot create an economic label, train a model or grant broker authority. The first snapshot contains three prospective M15 candles per market and zero joined opportunities; all 27 rows are blocked by the preregistered 15-candle ATR warm-up. A no-overwrite output option supports later timestamped snapshots, and an independent verifier checks artifact hashes, unique identities, summary counts and authority limits.
+
+## Increment 7 status
+
+The second immutable join snapshot was captured after 17 authoritative M15 candles accumulated per market. The first 14 rows per market remain ATR warm-up; the three later candidates exposed incomplete 120-minute horizons and M5 source transitions, with zero joined rows. The M5 transition had the same cause as M15: direct broker M5 and M1-derived M5 competed for one canonical key. Live canonical persistence now accepts only broker M1 directly; M5/M15/M30/H1 all use complete M1 aggregation with versioned source names and ingestion timestamps. Historical mixed rows were not changed and will leave the four-bar feature window naturally. The current historical backfill ledger separately shows 44 complete, 41 failed and 89 superseded jobs; completion of the worker queue does not establish research eligibility for failed partitions.
+
+## Increment 8 status
+
+Durable prospective accumulation is implemented and active. Migration `059_prospective_opportunity_ledger.sql` creates append-only transition and milestone tables with UPDATE/DELETE rejection triggers and a per-market training-gate view. The idempotent worker maps evidence into `ATR_PENDING`, `FEATURE_PENDING`, `ROLLOVER_BLOCKED`, `PATH_PENDING`, `PATH_BLOCKED` and `JOINED`, preserving ATR, feature, M1-path and full evidence hashes. Its first cycle appended 153 events and one immutable zero-joined milestone; an identical second cycle appended zero events and no milestone. A Windows service now evaluates the ledger every five minutes. The tournament entry point reads the SQL gate and blocks each market below 30 joined opportunities; a direct EURUSD attempt was rejected at `0/30` before training. The service is RUNNING, all nine gates remain closed, and SHADOW/new-orders-disabled controls are unchanged.
+
+## Current completion matrix
+
+| Step | Status | Completed evidence | Work still required |
+| --- | --- | --- | --- |
+| 0. Safety baseline | COMPLETE | Repeated read-only control checks show SHADOW and new orders disabled; safety tests pass. | Repeat at each release and closure audit. |
+| 1. Economic outcome contract | COMPLETE FOR RESEARCH | Bid/ask M1 evaluator, ambiguity, gaps, session/time exits, costs and immutable identity are implemented and tested. | No execution authority follows from this research primitive. |
+| 2. Data authority | PARTIAL | Nine-market path inventory, three-view M1 quality, single-writer prospective M5/M15 and append-only joins exist. | Independently validate/recover 41 failed historical partitions; accumulate at least 30 joined prospective rows for one market; diagnose any future `PATH_BLOCKED` events. |
+| 3. Broker rule authority | PARTIAL / FAIL-CLOSED | Nine IG payloads were inspected; unsupported size increment remains non-authoritative and submission is rejected. Commission/no-rollover research costs are governed. | Obtain authoritative deal-size increment or an independently governed broker pre-submission validation contract before any Demo order. |
+| 4. Point-in-time features | COMPLETE FOR RESEARCH | M1/M5/M15 cutoffs, ingestion availability, source continuity, spread and ATR(14) are versioned and leakage-tested. | Continue prospective evidence to prove stable feature availability at scale. |
+| 5. Frozen research cohort | PARTIAL | Protocols, development universe, cost policy, eligibility, outcomes and prospective append-only ledger are hash-attested. | Reach the preregistered 30 joined opportunities in at least one market and freeze that cohort's final executable outcomes. |
+| 6. Governed tournament | BLOCKED BY DESIGN | SQL training gate and CLI enforcement reject markets below 30; validation and holdout remain closed. | At 30 joined rows, run development-only Logistic Regression, Random Forest and HGB on the identical cohort; select at most one policy per market. Then evaluate locked validation and untouched holdout without tuning. |
+| 7. Prospective Shadow | PARTIAL FOUNDATION | Every prospective opportunity and rejection can transition append-only with evidence hashes; milestones are immutable. | After a governed candidate exists, add candidate/zero-trade/outcome Shadow ledger integration and accumulate forward after-cost evidence. |
+| 8. Operations/deployment | PARTIAL | Migrations 059, market-stream single-writer changes and accumulation Windows service are active locally; services and safety controls were checked. | Commit/release fingerprint the exact Git revision across API, stream, worker, web and schema; resolve stale expired-programme owner display; verify authenticated public deployment. |
+| 9. Closure audit | NOT DUE | Backend/frontend checks and current remediation report exist. | Repeat the full nine-market economic, safety, runtime-version and UI audit after the tournament and Shadow work. |
+
+### Audit blocker disposition
+
+- **Implemented or materially remediated:** B03 executable labels/features, most of B04 prospective lineage/path evidence, and the B09 holdout/tournament lock.
+- **Open external/data gates:** B01 authoritative deal-size increment; B02 sufficient joined cohort and governed model economics; remaining B04 failed historical partitions and future path gaps.
+- **Open later-stage work:** B05 forward Shadow evidence, B06 expired-programme display, B07 deployed revision fingerprint, B08 controlled Demo execution/reconciliation canary, and B10 authenticated public UI verification.
+- **Investigated but still conditional:** B11 USDJPY multi-source historical overlap. Prospective canonical lineage is fixed; frozen history remains unchanged.
+
+## Completion rule
+
+A workstream is complete only when code, tests, source/data provenance and the safety snapshot agree. New research results remain non-promotable until identical-cohort chronological validation, untouched holdout, forward Shadow and broker/risk evidence pass independently. Future continuation should use the next incomplete plan step rather than weakening gates or treating a report as implementation.

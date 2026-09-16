@@ -42,6 +42,19 @@ def test_rule_uses_broker_minimum_and_quote_currency_conversion() -> None:
     assert rule.margin_factor_pct == Decimal("3.5")
 
 
+def test_price_min_step_distance_does_not_become_authoritative_deal_size_step() -> None:
+    # IG Demo market details expose minStepDistance in broker price POINTS.
+    # It does not describe the increment of position/deal size.
+    data = payload()
+    data["dealingRules"]["minStepDistance"] = {"value": 5, "unit": "POINTS"}
+    rule = parse_broker_market_rule(
+        data, epic="CS.D.EURUSD.CFD.IP", quote_currency="USD",
+        quote_to_zar=Decimal("18"))
+    assert rule.size_increment_authoritative is False
+    assert rule.size_increment_source == "CONSERVATIVE_MINIMUM_FALLBACK"
+    assert rule.size_increment == rule.min_deal_size
+
+
 def test_percentage_stop_is_converted_to_price_distance() -> None:
     data = payload("PERCENTAGE")
     data["dealingRules"]["minNormalStopOrLimitDistance"]["value"] = 1

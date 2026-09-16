@@ -1,0 +1,32 @@
+{
+  "authority": "AUTHORITATIVE_COMMISSION_AND_NO_ROLLOVER_COHORT_POLICY",
+  "version": "IG_ZA_SPREAD_ONLY_NO_ROLLOVER_COHORT_V1",
+  "registered_on_utc_date": "2026-09-16",
+  "scope": "Aurex IG Demo cash CFDs: eight FX/spot-metal markets and Germany 40 cash index; no share CFDs",
+  "official_sources": [
+    {
+      "url": "https://www.ig.com/za/cfd-trading/our-charges",
+      "claim": "IG ZA identifies spread as the direct charge for cash FX, indices and commodities, while commission applies to share CFDs; cash positions held past 22:00 UK time incur overnight funding."
+    },
+    {
+      "url": "https://www.ig.com/za/cfd-trading",
+      "claim": "IG ZA states that it charges a spread on markets other than share CFDs, which use commission instead."
+    },
+    {
+      "url": "https://www.ig.com/za/help-and-support/articles/767200-what-are-ig-s-commodities-cfd-product-details",
+      "claim": "IG ZA states no additional commodity commission unless notified and describes variable spot-metal overnight funding."
+    }
+  ],
+  "commission_bps_round_trip": 0.0,
+  "commission_authority": "AUTHORITATIVE_OFFICIAL_IG_ZA_PRODUCT_TERMS",
+  "financing_rate": "VARIABLE_NOT_FROZEN",
+  "financing_policy": "EXCLUDE_ANY_MAXIMUM_HOLDING_WINDOW_CROSSING_22_00_EUROPE_LONDON",
+  "eligible_cost_result": "financing_bps_per_day=0 is valid only after the no-rollover gate passes",
+  "markets": {
+    "AUDJPY": "FX", "EURJPY": "FX", "EURUSD": "FX", "GBPJPY": "FX",
+    "GBPUSD": "FX", "GERMANY40": "INDEX", "USDJPY": "FX",
+    "USDZAR": "FX", "XAUUSD": "METAL"
+  },
+  "broker_order_authority": false,
+  "deal_size_increment_authority": false
+}

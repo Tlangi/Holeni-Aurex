@@ -19,6 +19,12 @@ FIELDS = [
 ]
 STREAM_SCALES = {"1MINUTE": ("M1", 1), "5MINUTE": ("M5", 5)}
 DERIVED_SCALES = {"M5": 5, "M15": 15, "M30": 30, "H1": 60}
+CANONICAL_DIRECT_TIMEFRAME = "M1"
+
+
+def accepts_direct_stream_candle(timeframe: str) -> bool:
+    """Only broker M1 is canonical; every wider live candle is derived from it."""
+    return timeframe == CANONICAL_DIRECT_TIMEFRAME
 
 
 def _number(update: object, field: str) -> Decimal | None:
@@ -247,6 +253,8 @@ class IGMarketStream:
         self, market: dict[str, object], timeframe: str, minutes: int, opened: datetime, values: list[Decimal],
         bid: list[Decimal], ask: list[Decimal], ticks: int,
     ) -> None:
+        if not accepts_direct_stream_candle(timeframe):
+            return
         market_id = str(market["market_id"])
         regular = is_regular_session(
             opened, calendar_code=str(market["calendar_code"]),
@@ -271,42 +279,6 @@ class IGMarketStream:
                 )
                 if timeframe == "M1":
                     self._aggregate_m1(cursor, market_id, opened)
-                if timeframe != "M5":
-                    connection.commit()
-                    self._component("CURRENT", f"IG Lightstreamer completed {timeframe} candles are current")
-                    return
-                bucket = opened.replace(minute=opened.minute - opened.minute % 15)
-                cursor.execute(
-                    """SELECT COUNT(*),MIN([low]),MAX([high]),SUM(tick_count),
-                              (SELECT TOP 1 [open] FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
-                              (SELECT TOP 1 [close] FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC)
-                       FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s""",
-                    (market_id, bucket, bucket + timedelta(minutes=15), market_id, bucket,
-                     bucket + timedelta(minutes=15), market_id, bucket, bucket + timedelta(minutes=15)),
-                )
-                count, low, high, volume, first_open, last_close = cursor.fetchone()
-                if int(count) == 3:
-                    cursor.execute(
-                        """IF NOT EXISTS(SELECT 1 FROM app.candles WHERE market_id=%s AND timeframe='M15' AND open_time_utc=%s)
-                           INSERT app.candles(market_id,timeframe,open_time_utc,close_time_utc,[open],high,low,[close],
-                             bid_open,bid_high,bid_low,bid_close,ask_open,ask_high,ask_low,ask_close,
-                             spread_open,spread_close,is_regular_session,tick_count,source,completed)
-                           SELECT %s,'M15',%s,%s,%s,%s,%s,%s,
-                             (SELECT TOP 1 bid_open FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
-                             MAX(bid_high),MIN(bid_low),(SELECT TOP 1 bid_close FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
-                             (SELECT TOP 1 ask_open FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
-                             MAX(ask_high),MIN(ask_low),(SELECT TOP 1 ask_close FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
-                             (SELECT TOP 1 spread_open FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
-                             (SELECT TOP 1 spread_close FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
-                             MIN(CAST(is_regular_session AS int)),%s,'IG_LIGHTSTREAMER',1
-                           FROM app.candles WHERE market_id=%s AND timeframe='M5' AND open_time_utc>=%s AND open_time_utc<%s""",
-                        (market_id, bucket, market_id, bucket, bucket + timedelta(minutes=15),
-                         first_open, high, low, last_close,
-                         market_id,bucket,bucket+timedelta(minutes=15), market_id,bucket,bucket+timedelta(minutes=15),
-                         market_id,bucket,bucket+timedelta(minutes=15), market_id,bucket,bucket+timedelta(minutes=15),
-                         market_id,bucket,bucket+timedelta(minutes=15), market_id,bucket,bucket+timedelta(minutes=15),
-                         volume, market_id,bucket,bucket+timedelta(minutes=15)),
-                    )
                 connection.commit()
                 self._component("CURRENT", "IG Lightstreamer completed candles are current")
             except Exception:
@@ -337,13 +309,14 @@ class IGMarketStream:
                      (SELECT TOP 1 spread_open FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc),
                      (SELECT TOP 1 spread_close FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s ORDER BY open_time_utc DESC),
                      MIN(spread_min),MAX(spread_max),AVG(spread_mean),MIN(CAST(is_regular_session AS int)),SUM(tick_count),
-                     'DERIVED_M1',1,SYSUTCDATETIME(),'COMPLETE'
+                     CONCAT('IG_LIGHTSTREAMER_M1_AGG_',%s,'_V1'),1,SYSUTCDATETIME(),'COMPLETE'
                    FROM app.candles WHERE market_id=%s AND timeframe='M1' AND open_time_utc>=%s AND open_time_utc<%s""",
                 (market_id,bucket,end,minutes,market_id,timeframe,bucket,
                  market_id,timeframe,bucket,end,
                  market_id,bucket,end, market_id,bucket,end, market_id,bucket,end,
                  market_id,bucket,end, market_id,bucket,end, market_id,bucket,end,
-                 market_id,bucket,end, market_id,bucket,end, market_id,bucket,end))
+                 market_id,bucket,end, market_id,bucket,end,
+                 timeframe, market_id,bucket,end))
 
     def _component(self, status: str, detail: str, *, include_ig_demo: bool = False) -> None:
         try:
