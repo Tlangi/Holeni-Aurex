@@ -25,6 +25,14 @@ if __name__ == "__main__":
     parser.add_argument("--notes", default="Audited challenger comparison; no holdout or execution")
     parser.add_argument("--full", action="store_true", help="Print complete candidate evidence")
     arguments = parser.parse_args()
+    # The count gate can open before the executable prospective labels exist.
+    # This legacy tournament still consumes the M15 directional research lane.
+    # Keep it closed until a separate entry point is wired to a verified,
+    # immutable prospective LONG/SHORT outcome cohort.
+    raise SystemExit(
+        "GOVERNED_PROSPECTIVE_OUTCOMES_NOT_FROZEN: "
+        "legacy directional tournament is disabled for the economic protocol"
+    )
     settings = get_settings()
     with open_database(settings) as connection:
         cursor = connection.cursor()
