@@ -1,0 +1,23 @@
+{
+  "authority": "PRE_REGISTERED_NONPROMOTABLE_PROSPECTIVE_RESEARCH",
+  "protocol_version": "AUREX_PROSPECTIVE_EXECUTABLE_COHORT_V2",
+  "registered_on_utc_date": "2026-09-20",
+  "reason": "The original economic protocol's 16 September validation boundary predates the prospective source-continuity activation. This distinct cohort fixes later chronological partitions before accessing any prospective economic outcomes; the original frozen development and validation partitions remain unchanged.",
+  "outcome_access_before_registration": false,
+  "source_join_snapshot_sha256": "9d2f75cb140fafdb7c1149973de624864b981acd17656644c9438f82534c5e8d",
+  "source_join_snapshot_file": "AUREX_PROSPECTIVE_ACCUMULATION_MILESTONE_20260918T210733Z_9d2f75cb140f.json",
+  "membership": "Every JOINED opportunity in the specified immutable snapshot, across all nine markets; do not select by return, prior model score, direction or policy result. Non-JOINED opportunities remain in the source snapshot with reasons and receive no economic label.",
+  "minimum_joined_per_market": 30,
+  "development_end_exclusive_utc": "2026-09-19T00:00:00Z",
+  "validation_start_utc": "2026-09-23T00:00:00Z",
+  "holdout_start_utc": "2026-09-30T00:00:00Z",
+  "boundary_purge_minutes": 120,
+  "boundary_embargo_minutes": 120,
+  "validation_and_holdout_access_in_development_freeze": false,
+  "execution_policy_source": "AUREX_EXECUTABLE_ECONOMIC_PROTOCOL_V1 policy_families, directions and first-broker-M1-open entry, with ATR14 amendment",
+  "cost_policy_source": "IG_ZA_SPREAD_ONLY_NO_ROLLOVER_COHORT_V1; development-only market P75 and P95 M1 close-spread sensitivities; bid/ask execution and no-rollover gate",
+  "ambiguous_or_unverifiable": "Retain explicit status and reason; never convert to a loss or favorable fill",
+  "policy_selection": "At most one family per market on development only after all preregistered families and both directions are frozen; validation and holdout remain closed until the selection is locked",
+  "model_promotion": "NONE",
+  "broker_submission_authority": false
+}

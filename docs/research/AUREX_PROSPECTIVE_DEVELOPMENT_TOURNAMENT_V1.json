@@ -1,0 +1,24 @@
+{
+  "authority": "PRE_REGISTERED_DEVELOPMENT_ONLY_MODEL_COMPARISON",
+  "version": "AUREX_PROSPECTIVE_DEVELOPMENT_TOURNAMENT_V1",
+  "registered_on_utc_date": "2026-09-20",
+  "outcome_manifest_sha256": "2d60a8b714be203a339d834b9cf725f8584a44b8b25d0757c3a166a52488af2d",
+  "membership": "Per market, intersect the frozen opportunities with EVALUATED outcomes for every preregistered family, both directions and both sensitivities; all candidates use this exact same membership, point-in-time features and chronological split.",
+  "excluded_outcomes": "Ambiguous or unverifiable outcomes are excluded from the identical comparison cohort and reported by count, never assigned a return.",
+  "markets": "Only markets with at least 30 common complete opportunities may enter. Germany 40 remains reported as ineligible.",
+  "minimum_joined_per_market": 30,
+  "target": "For each policy family, choose LONG, SHORT or NO_TRADE by maximum observed NORMAL_P75 net return in the development training partition only; ties favor NO_TRADE, then LONG.",
+  "split": "Sort by decision_at_utc then opportunity_id; last 30 percent is development assessment, first 70 percent is training. Purge training rows whose 120-minute outcome horizon touches the first assessment decision. Require at least 30 training and 15 assessment opportunities.",
+  "models": {
+    "LOGISTIC_REGRESSION": "StandardScaler plus LogisticRegression(max_iter=1000, random_state=17)",
+    "RANDOM_FOREST": "RandomForestClassifier(n_estimators=200, min_samples_leaf=5, random_state=17, n_jobs=1)",
+    "HGB": "HistGradientBoostingClassifier(max_iter=100, learning_rate=0.05, max_leaf_nodes=15, random_state=17)"
+  },
+  "model_hyperparameter_tuning": "NONE",
+  "assessment": "For predicted trades, report NORMAL_P75 and STRESSED_P95 net expectancy, profit factor, max compounded drawdown and trade count on the same assessment rows; report NO_TRADE count. No profitability claim follows from development alone.",
+  "development_selection": "At most one family/model per market, only if normal and stressed PF exceed 1, normal and stressed trade expectancy exceed 0 and at least 10 assessment trades. Choose highest stressed expectancy; ties use stressed PF then model and family ID. Zero qualifying candidates means no selection.",
+  "validation_accessed": false,
+  "holdout_accessed": false,
+  "model_promotion": "NONE",
+  "broker_submission_authority": false
+}
