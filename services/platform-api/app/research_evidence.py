@@ -184,6 +184,7 @@ def sync_quality_evidence(settings: Settings) -> list[dict[str, object]]:
                 now, calendar_code=str(market["calendar_code"]),
                 market_timezone=str(market["market_timezone"]),
                 session_open=market["session_open_local"], session_close=market["session_close_local"],
+                symbol=str(market["symbol"]),
                 holidays=holiday_schedule,
             )
             statuses: dict[str, list[str]] = {"DUKASCOPY": [], "IG": []}

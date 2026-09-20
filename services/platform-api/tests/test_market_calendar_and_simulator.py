@@ -85,6 +85,43 @@ def test_fx_weekend_is_closed_and_sunday_reopen_has_grace() -> None:
     assert (opened.status, opened.should_receive_data) == ("OPEN", True)
 
 
+def test_spot_gold_sunday_open_uses_london_dst_without_hiding_fx_gaps() -> None:
+    base = {"calendar_code": "FX_24X5", "market_timezone": "UTC",
+            "session_open": None, "session_close": None}
+    before = operational_session_state(datetime(2026, 9, 20, 21, 45, tzinfo=timezone.utc),
+                                       symbol="XAUUSD", **base)
+    grace = operational_session_state(datetime(2026, 9, 20, 22, 10, tzinfo=timezone.utc),
+                                      symbol="XAUUSD", **base)
+    opened = operational_session_state(datetime(2026, 9, 20, 22, 25, tzinfo=timezone.utc),
+                                       symbol="XAUUSD", **base)
+    winter_before = operational_session_state(datetime(2026, 11, 1, 22, 45, tzinfo=timezone.utc),
+                                              symbol="XAUUSD", **base)
+    winter_grace = operational_session_state(datetime(2026, 11, 1, 23, 10, tzinfo=timezone.utc),
+                                             symbol="XAUUSD", **base)
+    fx = operational_session_state(datetime(2026, 9, 20, 21, 45, tzinfo=timezone.utc),
+                                   symbol="USDJPY", **base)
+    assert (before.reason, before.should_receive_data) == ("SPOT_METAL_WEEKEND", False)
+    assert (grace.status, grace.should_receive_data) == ("OPEN_GRACE", False)
+    assert (opened.status, opened.should_receive_data) == ("OPEN", True)
+    assert (winter_before.status, winter_grace.status) == ("CLOSED", "OPEN_GRACE")
+    assert fx.should_receive_data
+
+
+def test_spot_gold_daily_break_is_not_a_stale_feed_incident() -> None:
+    base = {"calendar_code": "FX_24X5", "market_timezone": "UTC",
+            "session_open": None, "session_close": None, "symbol": "XAUUSD"}
+    break_state = operational_session_state(
+        datetime(2026, 9, 21, 21, 30, tzinfo=timezone.utc), **base)
+    resumed = operational_session_state(
+        datetime(2026, 9, 21, 22, 25, tzinfo=timezone.utc), **base)
+    friday_close = operational_session_state(
+        datetime(2026, 9, 25, 21, 10, tzinfo=timezone.utc), **base)
+    assert (break_state.reason, break_state.should_receive_data) == (
+        "SPOT_METAL_DAILY_BREAK", False)
+    assert resumed.should_receive_data
+    assert friday_close.should_receive_data is False
+
+
 def test_xetra_monitoring_uses_local_session_holidays_and_reopen_grace() -> None:
     before = operational_session_state(
         datetime(2026, 8, 31, 6, 30, tzinfo=timezone.utc),

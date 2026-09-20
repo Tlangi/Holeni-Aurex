@@ -150,6 +150,7 @@ def inspect_health(settings: Settings) -> list[HealthIssue]:
                     market_timezone=str(market["market_timezone"]),
                     session_open=market["session_open_local"],
                     session_close=market["session_close_local"],
+                    symbol=str(market["symbol"]),
                     holidays=holidays,
                 )
                 any_open_session = any_open_session or session.should_receive_data

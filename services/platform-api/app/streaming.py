@@ -209,6 +209,7 @@ class IGMarketStream:
             now, calendar_code=str(market["calendar_code"]),
             market_timezone=str(market["timezone"]), session_open=market["open"],
             session_close=market["close"],
+            symbol=str(market.get("symbol") or ""),
             holidays={day: None for day in market["holidays"]},
         ).should_receive_data for market in self.markets.values())
 

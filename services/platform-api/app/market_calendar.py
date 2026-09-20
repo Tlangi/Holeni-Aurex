@@ -22,6 +22,7 @@ class MarketSessionState:
 def operational_session_state(
     now_utc: datetime, *, calendar_code: str, market_timezone: str,
     session_open: time | None, session_close: time | None,
+    symbol: str | None = None,
     holidays: Mapping[date, time | None] | None = None,
     reopen_grace: timedelta = timedelta(minutes=20),
 ) -> MarketSessionState:
@@ -32,6 +33,30 @@ def operational_session_state(
     """
     now = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
     now = now.astimezone(timezone.utc)
+    if symbol == "XAUUSD" and calendar_code == "FX_24X5":
+        # IG ZA spot metals normally quote 23:00 Sunday through 22:00 Friday
+        # London time, with a 22:00-23:00 London daily break. This operational
+        # expectation is distinct from research regular-session eligibility.
+        london = now.astimezone(ZoneInfo("Europe/London"))
+        if london.date() in (holidays or {}) and holidays[london.date()] is None:
+            return MarketSessionState("CLOSED", "MARKET_HOLIDAY", False)
+        weekday, clock = london.weekday(), london.time().replace(tzinfo=None)
+        if weekday == 5 or (weekday == 6 and clock < time(23)) or (
+            weekday == 4 and clock >= time(22)
+        ):
+            return MarketSessionState("CLOSED", "SPOT_METAL_WEEKEND", False)
+        if time(22) <= clock < time(23):
+            return MarketSessionState("CLOSED", "SPOT_METAL_DAILY_BREAK", False)
+        opened_local = datetime.combine(london.date(), time(23), tzinfo=ZoneInfo("Europe/London"))
+        if clock < time(22):
+            opened_local -= timedelta(days=1)
+        opened = opened_local.astimezone(timezone.utc)
+        grace_until = opened + reopen_grace
+        if now < grace_until:
+            return MarketSessionState("OPEN_GRACE", "SPOT_METAL_REOPEN_GRACE", False,
+                                      opened, grace_until)
+        return MarketSessionState("OPEN", "SPOT_METAL_SESSION", True,
+                                  opened, grace_until)
     if calendar_code == "FX_24X5":
         # Only an explicitly recorded full closure may suppress weekday feed
         # expectations. Ordinary FX weekdays do not have a DAX-like overnight

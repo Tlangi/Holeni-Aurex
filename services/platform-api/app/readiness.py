@@ -153,6 +153,7 @@ def _database_checks(settings: Settings, tenant_id: str) -> dict[str, ReadinessC
                 now, calendar_code=str(row["calendar_code"]),
                 market_timezone=str(row["market_timezone"]),
                 session_open=row["session_open_local"], session_close=row["session_close_local"],
+                symbol=str(row["symbol"]),
                 holidays=holidays,
             )))
     market_fresh = bool(markets) and all(not market_data_stale(

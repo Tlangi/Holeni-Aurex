@@ -526,6 +526,7 @@ def model_readiness(settings: Settings, tenant_id: str) -> dict[str, object]:
                 now, calendar_code=str(row["calendar_code"]),
                 market_timezone=str(row["market_timezone"]),
                 session_open=row["session_open_local"], session_close=row["session_close_local"],
+                symbol=str(row["symbol"]),
                 holidays=holidays,
             )
             m5_fresh = not market_data_stale(

@@ -44,6 +44,7 @@ def _legacy_schedule_ig_recovery_jobs(
                 now, calendar_code=str(gap["calendar_code"]),
                 market_timezone=str(gap["market_timezone"]),
                 session_open=gap["session_open_local"], session_close=gap["session_close_local"],
+                symbol=str(gap["symbol"]),
                 holidays=holidays,
             )
             status = "QUEUED" if session.should_receive_data else "SESSION_DEFERRED"

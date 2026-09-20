@@ -54,6 +54,7 @@ def main() -> None:
             session = operational_session_state(
                 now, calendar_code=r["calendar_code"], market_timezone=r["market_timezone"],
                 session_open=r["session_open_local"], session_close=r["session_close_local"],
+                symbol=str(r["symbol"]),
                 holidays=holidays)
             markets.append({"symbol": r["symbol"], "session": session.status,
                             "session_reason": session.reason,
