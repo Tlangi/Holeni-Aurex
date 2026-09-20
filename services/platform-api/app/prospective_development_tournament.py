@@ -12,6 +12,19 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 
+def selected_model_factory(name: str):
+    if name == "LOGISTIC_REGRESSION":
+        return make_pipeline(StandardScaler(),
+            LogisticRegression(max_iter=1000, random_state=17))
+    if name == "RANDOM_FOREST":
+        return RandomForestClassifier(
+            n_estimators=200, min_samples_leaf=5, random_state=17, n_jobs=1)
+    if name == "HGB":
+        return HistGradientBoostingClassifier(
+            max_iter=100, learning_rate=0.05, max_leaf_nodes=15, random_state=17)
+    raise ValueError(f"Unregistered prospective model: {name}")
+
+
 def chronological_development_split(members: list[dict], *, purge_minutes: int = 120):
     ordered = sorted(members, key=lambda row: (row["decision_at_utc"], row["opportunity_id"]))
     cut = math.floor(len(ordered) * 0.7)
@@ -102,14 +115,8 @@ def run_development_comparison(frozen: dict, prereg: dict, economic: dict) -> di
                     summary["candidates"].append({"family": family, "model": model_name,
                         "status": "SINGLE_CLASS_TRAINING", "development_selectable": False})
                 continue
-            models = {
-                "LOGISTIC_REGRESSION": make_pipeline(StandardScaler(),
-                    LogisticRegression(max_iter=1000, random_state=17)),
-                "RANDOM_FOREST": RandomForestClassifier(
-                    n_estimators=200, min_samples_leaf=5, random_state=17, n_jobs=1),
-                "HGB": HistGradientBoostingClassifier(
-                    max_iter=100, learning_rate=0.05, max_leaf_nodes=15, random_state=17),
-            }
+            models = {name: selected_model_factory(name) for name in
+                      ("LOGISTIC_REGRESSION", "RANDOM_FOREST", "HGB")}
             for model_name, model in models.items():
                 model.fit(x_train, y_train)
                 predictions = model.predict(x_test)

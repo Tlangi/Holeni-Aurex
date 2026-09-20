@@ -1,0 +1,17 @@
+{
+  "authority": "PRE_REGISTERED_CLOSED_FUTURE_EVALUATION_WINDOWS",
+  "version": "AUREX_PROSPECTIVE_EVALUATION_WINDOWS_V1",
+  "registered_on_utc_date": "2026-09-20",
+  "selected_model_manifest_sha256": "760076ef23938323036a4964647c1c003195dcfcffa9757bdcd27a9a2fdfdd47",
+  "validation_start_utc": "2026-09-23T00:00:00Z",
+  "validation_end_exclusive_utc": "2026-09-30T00:00:00Z",
+  "holdout_start_utc": "2026-09-30T00:00:00Z",
+  "holdout_end_exclusive_utc": "2026-10-07T00:00:00Z",
+  "max_outcome_horizon_minutes": 120,
+  "minimum_joined_per_market": 30,
+  "eligibility": "Apply the same prospective M15, point-in-time ATR/feature, no-rollover, complete broker-native M1 path and cost policies without changing selected family, model binary, feature order, target, or decision threshold.",
+  "validation": "Do not assess until 120 minutes after validation end, then freeze full-window opportunities and outcomes. Report every selected market, including missing/unverifiable rows. A failed validation closes that market's holdout path.",
+  "holdout": "Do not access before 120 minutes after holdout end and only after validation passes under a separately frozen validation report. Single-use outcome read; no tuning or candidate replacement.",
+  "promotion": "NONE_FROM_EITHER_WINDOW_ALONE",
+  "broker_submission_authority": false
+}

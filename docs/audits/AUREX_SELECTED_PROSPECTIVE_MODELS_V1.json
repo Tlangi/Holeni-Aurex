@@ -1,0 +1,117 @@
+{
+  "authority": "FROZEN_NONPROMOTABLE_PROSPECTIVE_SELECTED_MODELS",
+  "broker_submission_authority": false,
+  "cohort_protocol_sha256": "fe36dd2a2aef4268324c0b6bbbc38546d9c9f8ffc9ae6c349360f20738a65f05",
+  "feature_names": [
+    "m15_return_window",
+    "m15_volatility",
+    "m1_return_window",
+    "m1_spread_bps",
+    "m1_volatility",
+    "m5_return_window",
+    "m5_volatility"
+  ],
+  "freeze_protocol_sha256": "1671c83af4e4fc208cbcabbeadbd4c0130494e6af103e8724a6c16d88b9e18b2",
+  "holdout_accessed": false,
+  "joblib_version": "1.5.3",
+  "manifest_sha256": "760076ef23938323036a4964647c1c003195dcfcffa9757bdcd27a9a2fdfdd47",
+  "model_promotion": "NONE",
+  "models": [
+    {
+      "artifact_file": "AUREX_SELECTED_PROSPECTIVE_EURJPY_V1.joblib",
+      "artifact_sha256": "24c82f4d7d8c8869b0f1fc4534826dc018c031d29a27a719064b8884745646fa",
+      "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+      "market": "EURJPY",
+      "model": "HGB",
+      "training_class_counts": {
+        "0": 32,
+        "1": 57,
+        "2": 42
+      },
+      "training_count": 131,
+      "training_first_decision_utc": "2026-09-16T15:30:00+00:00",
+      "training_last_decision_utc": "2026-09-18T18:45:00.607000+00:00",
+      "training_opportunity_ids_sha256": "f54fd2e5402eda5891afc4e8d78f60fd2a8e515cbb39691e66d0f4639db1720c",
+      "training_predictions_sha256": "a428f5ac7cc59f99c0fbc662401e8670b975f438307aba5e71f6a1a727307d85",
+      "training_sha256": "c07c6f475d30f7d15a48177a676618771d6a570de923757b13ed5cb30639634e"
+    },
+    {
+      "artifact_file": "AUREX_SELECTED_PROSPECTIVE_EURUSD_V1.joblib",
+      "artifact_sha256": "bd1076f9161b2ce5e4565b83a40f7fb521fd5454cbdfe14d7d4e899ac3442a72",
+      "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+      "market": "EURUSD",
+      "model": "HGB",
+      "training_class_counts": {
+        "0": 16,
+        "1": 43,
+        "2": 43
+      },
+      "training_count": 102,
+      "training_first_decision_utc": "2026-09-16T15:30:08.107000+00:00",
+      "training_last_decision_utc": "2026-09-18T18:30:00+00:00",
+      "training_opportunity_ids_sha256": "2cdffc9e0f8fbfa4e795a885d7d8e201b90e4f9ce080f62ab32c1cf7b889f529",
+      "training_predictions_sha256": "55b4295c3f2a51a9e3b15f84fc458f16ad69b06cbd00b05a0fdb06f10f939408",
+      "training_sha256": "ed3eb7c51f4884bacb089818cc485c24118d02dcffa45583912437abf5025573"
+    },
+    {
+      "artifact_file": "AUREX_SELECTED_PROSPECTIVE_GBPJPY_V1.joblib",
+      "artifact_sha256": "c60f7976474d2e63c9bccd2b2b02daf2d00959dbc3c70674351bbcbf51c03044",
+      "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+      "market": "GBPJPY",
+      "model": "LOGISTIC_REGRESSION",
+      "training_class_counts": {
+        "0": 34,
+        "1": 51,
+        "2": 47
+      },
+      "training_count": 132,
+      "training_first_decision_utc": "2026-09-16T15:30:04.221000+00:00",
+      "training_last_decision_utc": "2026-09-18T18:45:03.979000+00:00",
+      "training_opportunity_ids_sha256": "14e50a0f6739fc50407068879b6209293d482a23f499a53bd969fa0cd57d344b",
+      "training_predictions_sha256": "37d8be350fb83cdec8d51a12830a6963b0df826550c7b1b8e00360049a04966a",
+      "training_sha256": "fae89f605512ec7c91992a444d44352c51e9b688ed4f27c9cb3e59d593783a6a"
+    },
+    {
+      "artifact_file": "AUREX_SELECTED_PROSPECTIVE_USDJPY_V1.joblib",
+      "artifact_sha256": "a24889b7b83218eb04b805c2cd5db9a53f1c6029761cee020779c6f6acd6f518",
+      "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+      "market": "USDJPY",
+      "model": "HGB",
+      "training_class_counts": {
+        "0": 23,
+        "1": 59,
+        "2": 68
+      },
+      "training_count": 150,
+      "training_first_decision_utc": "2026-09-16T15:30:13.669000+00:00",
+      "training_last_decision_utc": "2026-09-18T18:45:07.437000+00:00",
+      "training_opportunity_ids_sha256": "780f1897370db8d845182fa93091d5b08806940246e292141fc0ac089efb1cc8",
+      "training_predictions_sha256": "f607a5e2ef126bed3cbf5dbc95a226775855e9c37867a20f45562f5aba083f98",
+      "training_sha256": "f13671143d75bedbf28248301045fb3d50a5b3311e73b0cb77ab7e7f600f0a46"
+    },
+    {
+      "artifact_file": "AUREX_SELECTED_PROSPECTIVE_XAUUSD_V1.joblib",
+      "artifact_sha256": "6d8e0c1d0f6e9bacd62212dc733d4ddea22668855dc90ef5a5de0879faa75c8e",
+      "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+      "market": "XAUUSD",
+      "model": "LOGISTIC_REGRESSION",
+      "training_class_counts": {
+        "0": 13,
+        "1": 63,
+        "2": 53
+      },
+      "training_count": 129,
+      "training_first_decision_utc": "2026-09-16T15:30:01.992000+00:00",
+      "training_last_decision_utc": "2026-09-18T19:00:00+00:00",
+      "training_opportunity_ids_sha256": "12f5de24c094cd316ad82a718fa5d3c424ce32556145307fc2df2ced4aff6440",
+      "training_predictions_sha256": "4c57c1047fdfdabf783447e76400e2d4802e55b9be3cf57d3fd5e90d2a876823",
+      "training_sha256": "2b31403e8a06879e8ca6806de6815ac49154e2ed6ecbac926fe49e8c431997a7"
+    }
+  ],
+  "outcome_manifest_sha256": "2d60a8b714be203a339d834b9cf725f8584a44b8b25d0757c3a166a52488af2d",
+  "python_version": "3.12.10",
+  "scikit_learn_version": "1.9.0",
+  "tournament_report_sha256": "42ac8e29a7e93ec456460731894bfdac58e56d3353b2f2b54b7c2af5ed8829d7",
+  "training_source": "FROZEN_DEVELOPMENT_ONLY",
+  "validation_accessed": false
+}
