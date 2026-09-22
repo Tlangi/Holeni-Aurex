@@ -1,8 +1,14 @@
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from app.config import Settings
-from app.health_monitor import component_attention_message, component_requires_attention, component_stale_after
+from app.health_monitor import (
+    HealthIssue,
+    component_attention_message,
+    component_requires_attention,
+    component_stale_after,
+    operational_notification_due,
+)
 
 
 def test_stale_current_feed_is_not_an_incident_while_markets_closed():
@@ -76,3 +82,58 @@ def test_macro_heartbeat_uses_schedule_not_broker_account_sync():
     assert "18:08:32 UTC / 2026-09-14 20:08:32 SAST" in detail
     assert "Shadow worker" in detail
     assert "account-sync" not in detail
+
+
+def _alert(*, status="OPEN", severity="WARNING", first_seen, last_notified=None):
+    return {
+        "status": status,
+        "severity": severity,
+        "first_seen_at_utc": first_seen,
+        "last_notified_at_utc": last_notified,
+    }
+
+
+def test_transient_operational_incident_is_not_emailed_during_grace_period():
+    now = datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc)
+    issue = HealthIssue("component.ig_demo", "WARNING", "IG demo stale", "detail")
+    assert not operational_notification_due(
+        _alert(first_seen=now - timedelta(minutes=4)), issue,
+        now=now, grace_minutes=5, reminder_minutes=1440,
+    )
+
+
+def test_persistent_operational_incident_is_emailed_after_grace_period():
+    now = datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc)
+    issue = HealthIssue("component.ig_demo", "WARNING", "IG demo stale", "detail")
+    assert operational_notification_due(
+        _alert(first_seen=now - timedelta(minutes=5)), issue,
+        now=now, grace_minutes=5, reminder_minutes=1440,
+    )
+
+
+def test_unresolved_operational_incident_is_reminded_only_daily():
+    now = datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc)
+    issue = HealthIssue("component.risk_engine", "CRITICAL", "Risk stale", "detail")
+    recent = _alert(
+        severity="CRITICAL", first_seen=now - timedelta(hours=2),
+        last_notified=now - timedelta(hours=23),
+    )
+    due = dict(recent, last_notified_at_utc=now - timedelta(hours=24))
+    assert not operational_notification_due(
+        recent, issue, now=now, grace_minutes=5, reminder_minutes=1440,
+    )
+    assert operational_notification_due(
+        due, issue, now=now, grace_minutes=5, reminder_minutes=1440,
+    )
+
+
+def test_severity_escalation_bypasses_reminder_interval():
+    now = datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc)
+    issue = HealthIssue("component.risk_engine", "CRITICAL", "Risk stale", "detail")
+    assert operational_notification_due(
+        _alert(
+            first_seen=now - timedelta(hours=1),
+            last_notified=now - timedelta(minutes=10),
+        ),
+        issue, now=now, grace_minutes=5, reminder_minutes=1440,
+    )

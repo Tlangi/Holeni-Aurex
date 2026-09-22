@@ -76,6 +76,36 @@ def component_attention_message(code: str, status: str, detail: str,
             f"status={status}; detail={detail}; checked={checked}")
 
 
+def operational_notification_due(
+    previous: dict | None,
+    issue: HealthIssue,
+    *,
+    now: datetime,
+    grace_minutes: int,
+    reminder_minutes: int,
+) -> bool:
+    """Notify only for persistent incidents, escalation, or a due reminder."""
+    if not previous or previous["status"] == "RESOLVED":
+        return False
+
+    severity_rank = {"WARNING": 1, "CRITICAL": 2}
+    if severity_rank.get(issue.severity, 0) > severity_rank.get(str(previous["severity"]), 0):
+        return True
+
+    first_seen = previous["first_seen_at_utc"]
+    if first_seen.tzinfo is None:
+        first_seen = first_seen.replace(tzinfo=timezone.utc)
+    if first_seen > now - timedelta(minutes=grace_minutes):
+        return False
+
+    last_notified = previous["last_notified_at_utc"]
+    if not last_notified:
+        return True
+    if last_notified.tzinfo is None:
+        last_notified = last_notified.replace(tzinfo=timezone.utc)
+    return last_notified <= now - timedelta(minutes=reminder_minutes)
+
+
 def _web_health_url(settings: Settings) -> str:
     if settings.app_env.lower() == "production":
         external = next((origin for origin in settings.allowed_origins
@@ -236,18 +266,22 @@ def persist_and_notify(settings: Settings, issues: list[HealthIssue]) -> dict[st
         for issue in issues:
             cursor.execute("SELECT * FROM app.operational_alerts WHERE alert_key=%s", (issue.key,))
             previous = cursor.fetchone()
-            should_notify = not previous or previous["status"] == "RESOLVED"
-            if previous and previous["last_notified_at_utc"]:
-                notified = previous["last_notified_at_utc"].replace(tzinfo=timezone.utc)
-                should_notify = should_notify or notified <= now - timedelta(
-                    minutes=settings.operational_alert_cooldown_minutes
-                )
+            should_notify = operational_notification_due(
+                previous,
+                issue,
+                now=now,
+                grace_minutes=settings.operational_alert_grace_minutes,
+                reminder_minutes=settings.operational_alert_cooldown_minutes,
+            )
             if previous:
                 cursor.execute(
                     """UPDATE app.operational_alerts SET severity=%s,status='OPEN',summary=%s,detail=%s,
-                       last_seen_at_utc=%s,resolved_at_utc=NULL,occurrence_count=occurrence_count+1
+                       first_seen_at_utc=CASE WHEN status='RESOLVED' THEN %s ELSE first_seen_at_utc END,
+                       last_seen_at_utc=%s,resolved_at_utc=NULL,
+                       last_notified_at_utc=CASE WHEN status='RESOLVED' THEN NULL ELSE last_notified_at_utc END,
+                       occurrence_count=CASE WHEN status='RESOLVED' THEN 1 ELSE occurrence_count+1 END
                        WHERE alert_key=%s""",
-                    (issue.severity, issue.summary, issue.detail, now, issue.key),
+                    (issue.severity, issue.summary, issue.detail, now, now, issue.key),
                 )
             else:
                 cursor.execute(

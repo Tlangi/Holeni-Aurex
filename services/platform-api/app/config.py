@@ -145,7 +145,10 @@ class Settings(BaseSettings):
     historical_m1_m5_minimum_match: float = Field(default=0.999, ge=0.95, le=1.0)
     log_level: str = "INFO"
     health_monitor_seconds: int = 60
-    operational_alert_cooldown_minutes: int = 60
+    # Suppress incidents that recover within a brief grace period and avoid
+    # repeating the same unresolved incident throughout the day.
+    operational_alert_grace_minutes: int = Field(default=5, ge=1, le=60)
+    operational_alert_cooldown_minutes: int = Field(default=1440, ge=60, le=10080)
     daily_progress_report_enabled: bool = True
     daily_progress_report_hour_sast: int = Field(default=18, ge=0, le=23)
     backup_directory: str = "C:\\Projects\\Forex\\operations\\backups"
