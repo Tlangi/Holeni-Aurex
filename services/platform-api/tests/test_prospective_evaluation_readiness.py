@@ -30,6 +30,9 @@ def test_holdout_requires_closed_window_and_validation_report():
     assert result["reason"] == "VALIDATION_REPORT_NOT_FROZEN"
     result = evaluation_readiness(WINDOWS, phase="holdout", now_utc=utc("2026-10-07T02:00:00Z"),
                                   validation_report_frozen=True)
+    assert result["reason"] == "VALIDATION_DID_NOT_PASS"
+    result = evaluation_readiness(WINDOWS, phase="holdout", now_utc=utc("2026-10-07T02:00:00Z"),
+                                  validation_report_frozen=True, validation_passed=True)
     assert result["status"] == "READY_FOR_SEPARATE_GOVERNED_FREEZE"
 
 

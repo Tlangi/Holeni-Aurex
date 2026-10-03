@@ -181,6 +181,49 @@ def requeue_legacy_validation_failures(settings: Settings) -> int:
     return changed
 
 
+def link_failed_jobs_to_import_evidence(settings: Settings) -> int:
+    """Attach the newest exact import batch to legacy failed jobs missing linkage."""
+    with open_database(settings) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """UPDATE j SET import_batch_id=matched.import_batch_id,
+                       updated_at_utc=SYSUTCDATETIME()
+               FROM app.historical_backfill_jobs j
+               CROSS APPLY (
+                 SELECT TOP (1) b.import_batch_id
+                 FROM app.historical_import_batches b
+                 WHERE b.market_id=j.market_id AND b.vendor=j.vendor
+                   AND b.vendor_symbol=j.vendor_symbol
+                   AND b.requested_start_utc=j.partition_start_utc
+                   AND b.requested_end_utc=j.partition_end_utc
+                 ORDER BY b.created_at_utc DESC,b.import_batch_id DESC
+               ) matched
+               WHERE j.status='FAILED' AND j.import_batch_id IS NULL"""
+        )
+        changed = int(cursor.rowcount or 0)
+        connection.commit()
+    return changed
+
+
+def failed_jobs_for_revalidation(settings: Settings) -> list[dict[str, object]]:
+    """Return only calendar/completeness failures with durable import evidence."""
+    with open_database(settings) as connection:
+        cursor = connection.cursor(as_dict=True)
+        cursor.execute(
+            """SELECT j.backfill_job_id,j.import_batch_id,m.symbol,j.last_error_detail,
+                      b.requested_start_utc,b.requested_end_utc,b.coverage_percentage,
+                      b.expected_trading_minutes,b.validation_version
+               FROM app.historical_backfill_jobs j
+               JOIN app.markets m ON m.market_id=j.market_id
+               JOIN app.historical_import_batches b ON b.import_batch_id=j.import_batch_id
+               WHERE j.status='FAILED' AND j.import_batch_id IS NOT NULL
+                 AND (j.last_error_detail LIKE 'failed_gates=%%COMPLETENESS_OR_RECENT_GAPS%%'
+                      OR j.last_error_code='OperationalError')
+               ORDER BY m.symbol,j.partition_start_utc"""
+        )
+        return list(cursor.fetchall())
+
+
 def resource_gate(settings: Settings, work_root: Path) -> tuple[bool, str]:
     free_gb = shutil.disk_usage(work_root).free / (1024**3)
     if free_gb < settings.historical_backfill_min_free_gb:

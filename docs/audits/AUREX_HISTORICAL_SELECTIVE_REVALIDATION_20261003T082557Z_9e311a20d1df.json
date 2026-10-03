@@ -1,0 +1,121 @@
+{
+  "authority": "HISTORICAL_FAILED_PARTITION_SELECTIVE_REVALIDATION",
+  "mode": "APPLY",
+  "validation_version": "HISTORICAL_PARTITION_V4_INSTRUMENT_CALENDAR",
+  "generated_at_utc": "2026-10-03T08:25:57.975524+00:00",
+  "linked_legacy_jobs": 77,
+  "market_filter": [
+    "XAUUSD"
+  ],
+  "eligible_job_count": 13,
+  "download_performed": false,
+  "model_training_performed": false,
+  "broker_submission_authority": false,
+  "results": [
+    {
+      "job_id": "c90e6305-0c25-40df-9e91-c340f437aa21",
+      "import_batch_id": "ef8a0be8-cf6b-4367-bc8c-f0297ec9b06e",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "4fa09ecc-c53e-42b7-b9ee-0c382f360221",
+      "import_batch_id": "ca18e70e-1dca-4e03-a4fb-aeea248f61b5",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "434f7007-a8c6-4a6d-88f0-2fbdfdac021e",
+      "import_batch_id": "b86542b3-c5a1-40fe-abda-357eef04a049",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "09593ce3-144a-4ca8-93bf-9be5c141c269",
+      "import_batch_id": "bd71a6cf-4b05-45eb-9d1d-e3240071213a",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "a3893091-c756-41c7-b3eb-6d36ffd1066d",
+      "import_batch_id": "cc7fd239-5e70-4716-8b21-ab87921a813b",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "e7c48880-2cf0-4656-990a-472c27991c59",
+      "import_batch_id": "79489243-163a-4696-8479-97a8a77274bf",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "24ece212-c141-4787-8dd1-3a7f30ff4a72",
+      "import_batch_id": "9824e848-7b2b-4b64-829e-751c0c3b5dae",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(2628, b\"String or binary data would be truncated in table 'ForexSaas.app.historical_import_batches', column 'validation_version'. Truncated value: 'HISTORICAL_PARTITION_V4_INSTRUMENT_CALEN'.DB-Lib error message 20018, severity 16:\\nGeneral SQL Server error: Check messages from the SQL Server\\n\")"
+    },
+    {
+      "job_id": "b9a68b0d-36fb-4ac5-9a58-2bc1673492c8",
+      "import_batch_id": "5a175976-4efe-4a09-8674-731f35aec744",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "e23d7dd9-e010-4110-9208-5c8aaf87a3a2",
+      "import_batch_id": "3c057209-38ca-47d7-af0d-a01773db7391",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "073ffb5b-6a74-4f88-885a-29b01f4f21ec",
+      "import_batch_id": "759133ea-129d-44b4-81a3-39707c749893",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "cfabed91-5811-472f-9382-ba28aa172873",
+      "import_batch_id": "52a88421-1012-429f-b590-4f3423adf510",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "04f8ca21-188e-4783-b26c-7fc4b4b3cd92",
+      "import_batch_id": "54584be0-9886-4414-aecf-f918e8451f93",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(20047, b'DB-Lib error message 20003, severity 6:\\nAdaptive Server connection timed out\\nDB-Lib error message 20047, severity 9:\\nDBPROCESS is dead or not enabled\\n')"
+    },
+    {
+      "job_id": "abebd74c-a1bb-452b-a788-dae6b9bfb9d9",
+      "import_batch_id": "451585b2-5c49-47d7-b930-2af2f62bfc54",
+      "market": "XAUUSD",
+      "status": "ERROR",
+      "error_type": "OperationalError",
+      "detail": "(2628, b\"String or binary data would be truncated in table 'ForexSaas.app.historical_import_batches', column 'validation_version'. Truncated value: 'HISTORICAL_PARTITION_V4_INSTRUMENT_CALEN'.DB-Lib error message 20018, severity 16:\\nGeneral SQL Server error: Check messages from the SQL Server\\n\")"
+    }
+  ],
+  "report_sha256": "9e311a20d1dfeaed0ee929e1ccfecb4b368f515ebeeb3c60fd7af4464aa7810b"
+}

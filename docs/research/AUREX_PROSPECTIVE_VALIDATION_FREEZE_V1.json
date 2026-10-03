@@ -1,0 +1,20 @@
+{
+  "authority": "PRE_REGISTERED_LOCKED_MODEL_VALIDATION_FREEZE",
+  "version": "AUREX_PROSPECTIVE_VALIDATION_FREEZE_V1",
+  "registered_on_utc_date": "2026-10-03",
+  "outcome_access_before_registration": false,
+  "evaluation_windows_sha256": "5bb112d49f70ce0307a6dcd27af3db6d5d50bd207141c86da92b2de01ef32644",
+  "selected_model_manifest_sha256": "760076ef23938323036a4964647c1c003195dcfcffa9757bdcd27a9a2fdfdd47",
+  "membership": "Every latest durable prospective opportunity state whose decision timestamp is in the registered validation interval. Only JOINED rows may receive outcomes; every rejected or pending state remains reported with its reason.",
+  "model_replay": "Load each selected development binary only after its SHA-256 matches the frozen manifest. Preserve market, policy family, model class, feature order and decision threshold. Retraining, refitting and retuning are forbidden.",
+  "costs": "Use the selected policy family and the market-specific NORMAL_P75 and STRESSED_P95 spread percentiles already frozen from development. Validation spread observations may be reported but may not recalibrate costs.",
+  "pass_rule": "For locked predicted trades, require at least 10 evaluable trades, NORMAL_P75 and STRESSED_P95 profit factor strictly above 1, and NORMAL_P75 and STRESSED_P95 trade expectancy strictly above 0. Any missing selected-market artifact, changed evidence hash or fewer than 10 evaluable trades fails validation.",
+  "ambiguous_or_unverifiable": "Retain the status and reason, exclude it from economic arithmetic and count it against evidence completeness; never convert it to a loss or favorable fill.",
+  "validation_start_utc": "2026-09-23T00:00:00Z",
+  "validation_end_exclusive_utc": "2026-09-30T00:00:00Z",
+  "max_outcome_horizon_minutes": 120,
+  "minimum_evaluable_trades": 10,
+  "holdout_accessed": false,
+  "model_promotion": "NONE",
+  "broker_submission_authority": false
+}

@@ -27,6 +27,33 @@ def test_index_closed_period_is_not_classified_as_missing() -> None:
     assert datetime(2026, 9, 7, 6, 59) not in expected
 
 
+def test_gold_london_daily_break_is_not_expected_source_data() -> None:
+    expected = expected_trading_minutes(
+        datetime(2026, 9, 15, 20, 59, tzinfo=timezone.utc),
+        datetime(2026, 9, 15, 22, 1, tzinfo=timezone.utc),
+        calendar_code="FX_24X5", market_timezone="UTC",
+        session_open=None, session_close=None, holidays=set(), symbol="XAUUSD",
+    )
+    # September is London summer time, so 22:00-23:00 London is 21:00-22:00 UTC.
+    assert datetime(2026, 9, 15, 20, 59) in expected
+    assert datetime(2026, 9, 15, 21, 0) not in expected
+    assert datetime(2026, 9, 15, 21, 59) not in expected
+    assert datetime(2026, 9, 15, 22, 0) in expected
+
+
+def test_gold_break_is_dst_aware() -> None:
+    expected = expected_trading_minutes(
+        datetime(2026, 11, 3, 21, 59, tzinfo=timezone.utc),
+        datetime(2026, 11, 3, 23, 1, tzinfo=timezone.utc),
+        calendar_code="FX_24X5", market_timezone="UTC",
+        session_open=None, session_close=None, holidays=set(), symbol="XAUUSD",
+    )
+    assert datetime(2026, 11, 3, 21, 59) in expected
+    assert datetime(2026, 11, 3, 22, 0) not in expected
+    assert datetime(2026, 11, 3, 22, 59) not in expected
+    assert datetime(2026, 11, 3, 23, 0) in expected
+
+
 def test_missing_minutes_are_grouped_into_partition_local_spans() -> None:
     expected = {datetime(2026, 9, 7, 0, minute) for minute in range(5)}
     gaps = classify_missing_minutes(expected, {min(expected), max(expected)}, symbol="USDJPY")

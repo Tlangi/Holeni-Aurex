@@ -10,7 +10,7 @@ from app.database import open_database
 from app.historical_quality import classify_missing_minutes, expected_trading_minutes, ohlc_valid
 
 
-VALIDATION_VERSION = "HISTORICAL_PARTITION_V3_CANONICAL"
+VALIDATION_VERSION = "HISTORICAL_PARTITION_V4_CALENDAR"
 
 
 def _naive_utc(value):
@@ -52,7 +52,7 @@ def validation_failure_detail(result: dict[str, object]) -> str:
 
 def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, object]:
     """Validate one vendor partition on a canonical timeline without changing provenance."""
-    with open_database(settings) as connection:
+    with open_database(settings, query_timeout_seconds=120) as connection:
         cursor = connection.cursor(as_dict=True)
         cursor.execute(
             """SELECT b.import_batch_id,b.market_id,b.vendor,b.requested_start_utc,b.requested_end_utc,
@@ -109,6 +109,7 @@ def validate_partition(settings: Settings, import_batch_id: str) -> dict[str, ob
             session_open=batch["session_open_local"],
             session_close=batch["session_close_local"],
             holidays=holidays,
+            symbol=str(batch["symbol"]),
         )
         observed = {_naive_utc(row["timestamp_utc"]) for row in candles}
         gaps = classify_missing_minutes(expected, observed, symbol=str(batch["symbol"]))

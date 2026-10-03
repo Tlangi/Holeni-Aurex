@@ -54,6 +54,11 @@ class HistoricalBackfillWorker:
                 result=import_dukascopy_ticks(self.settings,symbol=self._symbol(str(job["market_id"])),path=path,
                     vendor_symbol=str(job["vendor_symbol"]),requested_start=job["partition_start_utc"].replace(tzinfo=timezone.utc),
                     requested_end=job["partition_end_utc"].replace(tzinfo=timezone.utc))
+                # Preserve the imported evidence identity before validation so a
+                # failed gate can be rechecked without downloading or importing
+                # the same immutable partition again.
+                update_job(self.settings,job_id,"VALIDATING",
+                           import_batch_id=str(result["import_batch_id"]))
                 validation=validate_partition(self.settings,str(result["import_batch_id"]))
                 reconciliation=reconcile_batch_to_accepted_m5(
                     self.settings, str(result["import_batch_id"]),

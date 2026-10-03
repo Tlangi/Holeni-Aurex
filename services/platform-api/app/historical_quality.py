@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.market_calendar import is_regular_session
 
@@ -18,13 +19,23 @@ class HistoricalGap:
 
 def expected_trading_minutes(start: datetime, end: datetime, *, calendar_code: str,
                              market_timezone: str, session_open: object,
-                             session_close: object, holidays: set[object]) -> set[datetime]:
+                             session_close: object, holidays: set[object],
+                             symbol: str | None = None) -> set[datetime]:
     point=(start if start.tzinfo else start.replace(tzinfo=timezone.utc)).replace(second=0,microsecond=0)
     boundary=end if end.tzinfo else end.replace(tzinfo=timezone.utc)
     expected:set[datetime]=set()
     while point < boundary:
-        if is_regular_session(point,calendar_code=calendar_code,market_timezone=market_timezone,
-                              session_open=session_open,session_close=session_close,holidays=holidays):
+        regular = is_regular_session(point,calendar_code=calendar_code,market_timezone=market_timezone,
+                                     session_open=session_open,session_close=session_close,holidays=holidays)
+        # Spot Gold has an evidenced 22:00-23:00 Europe/London daily break.
+        # Keep this research expectation aligned with the operational calendar;
+        # do not generalize the exception to continuously quoted FX pairs.
+        london = point.astimezone(ZoneInfo("Europe/London"))
+        instrument_closed = (
+            symbol == "XAUUSD" and calendar_code == "FX_24X5"
+            and london.weekday() < 5 and 22 <= london.hour < 23
+        )
+        if regular and not instrument_closed:
             expected.add(point.replace(tzinfo=None))
         point += timedelta(minutes=1)
     return expected

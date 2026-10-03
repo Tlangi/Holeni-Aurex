@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 
 def evaluation_readiness(windows: dict, *, phase: str, now_utc: datetime,
-                         validation_report_frozen: bool = False) -> dict:
+                         validation_report_frozen: bool = False,
+                         validation_passed: bool = False) -> dict:
     if phase not in {"validation", "holdout"} or now_utc.tzinfo is None or now_utc.utcoffset() != timedelta(0):
         raise ValueError("Evaluation phase and aware UTC clock required")
     if windows.get("authority") != "PRE_REGISTERED_CLOSED_FUTURE_EVALUATION_WINDOWS":
@@ -21,6 +22,8 @@ def evaluation_readiness(windows: dict, *, phase: str, now_utc: datetime,
         status, reason = "BLOCKED", "WINDOW_OR_OUTCOME_HORIZON_INCOMPLETE"
     elif phase == "holdout" and not validation_report_frozen:
         status, reason = "BLOCKED", "VALIDATION_REPORT_NOT_FROZEN"
+    elif phase == "holdout" and not validation_passed:
+        status, reason = "BLOCKED", "VALIDATION_DID_NOT_PASS"
     else:
         status, reason = "READY_FOR_SEPARATE_GOVERNED_FREEZE", None
     return {"phase": phase, "status": status, "reason": reason,
