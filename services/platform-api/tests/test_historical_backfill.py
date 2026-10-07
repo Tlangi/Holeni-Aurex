@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.historical_backfill import (_next_month, download_partition, partition_priority,
-                                     recent_month_boundaries)
+from app.historical_backfill import (_next_month, download_partition, live_feed_current,
+                                     partition_priority, recent_month_boundaries)
 
 
 def test_month_partition_handles_year_boundary() -> None:
@@ -22,6 +22,26 @@ def test_backfill_priority_is_governed_and_newest_first() -> None:
         "USDJPY", datetime(2026, 8, 1), end)
     assert partition_priority("USDJPY", datetime(2026, 7, 1), end) < partition_priority(
         "EURUSD", datetime(2026, 9, 1), end)
+
+
+def _feed_market(latest: datetime | None) -> dict[str, object]:
+    return {"symbol": "EURUSD", "calendar_code": "FX_24X5", "market_timezone": "UTC",
+            "session_open_local": None, "session_close_local": None, "latest": latest}
+
+
+def test_backfill_feed_gate_allows_stale_closed_weekend() -> None:
+    now = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+    assert live_feed_current([_feed_market(now - timedelta(days=1))], [], now=now)
+
+
+def test_backfill_feed_gate_blocks_stale_open_market() -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+    assert not live_feed_current([_feed_market(now - timedelta(minutes=21))], [], now=now)
+
+
+def test_backfill_feed_gate_accepts_current_open_market() -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+    assert live_feed_current([_feed_market(now - timedelta(minutes=10))], [], now=now)
 
 
 def test_partition_download_is_daily_resumable_and_assembles_once(tmp_path: Path, monkeypatch) -> None:

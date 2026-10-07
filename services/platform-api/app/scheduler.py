@@ -135,7 +135,7 @@ def mark_stale_components(settings: Settings) -> None:
                   AND status NOT IN ('DISABLED', 'ERROR')
                   AND DATEDIFF(SECOND, checked_at_utc, SYSUTCDATETIME()) > %s;
                 """,
-                (settings.stale_after_seconds,),
+                (max(settings.stale_after_seconds, settings.account_sync_seconds * 3),),
             )
             connection.commit()
     except Exception:

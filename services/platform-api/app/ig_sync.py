@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from email.utils import parseaddr
 from contextlib import nullcontext
@@ -21,6 +21,22 @@ logger = logging.getLogger("aurex.sync")
 
 class SyncAlreadyRunning(RuntimeError):
     pass
+
+
+def transient_failure_grace_seconds(settings: Settings) -> int:
+    """Keep one broker/transport miss from replacing recent healthy evidence."""
+    return max(settings.stale_after_seconds, settings.account_sync_seconds * 3)
+
+
+def sync_failure_requires_degradation(
+    *, category: str, last_checked_at: datetime | None,
+    observed_at: datetime, grace_seconds: int,
+) -> bool:
+    if category in {"AUTHENTICATION", "SESSION"} or last_checked_at is None:
+        return True
+    checked = (last_checked_at.replace(tzinfo=timezone.utc)
+               if last_checked_at.tzinfo is None else last_checked_at.astimezone(timezone.utc))
+    return observed_at - checked >= timedelta(seconds=grace_seconds)
 
 
 def _converted(amount: Decimal, rate: CurrencyRate) -> Decimal:
@@ -173,13 +189,26 @@ def sync_ig_demo(
                     ((broker_code or type(exc).__name__)[:80], duration_ms, sync_run_id),
                 )
                 cursor.execute(
-                    """
-                    UPDATE app.platform_components
-                    SET status='DEGRADED', status_detail=%s,
-                        checked_at_utc=SYSUTCDATETIME()
-                    WHERE component_code='ig_demo';
-                    """, (error_detail[:300],)
+                    """SELECT status,checked_at_utc FROM app.platform_components
+                       WHERE component_code='ig_demo'"""
                 )
+                component = cursor.fetchone()
+                degrade = sync_failure_requires_degradation(
+                    category=category,
+                    last_checked_at=component[1] if component else None,
+                    observed_at=observed_at,
+                    grace_seconds=transient_failure_grace_seconds(settings),
+                )
+                if degrade:
+                    cursor.execute(
+                        """
+                        UPDATE app.platform_components
+                        SET status='DEGRADED', status_detail=%s,
+                            checked_at_utc=SYSUTCDATETIME()
+                        WHERE component_code='ig_demo'
+                          AND status NOT IN ('DISABLED','ERROR');
+                        """, (error_detail[:300],)
+                    )
                 connection.commit()
                 logger.warning(
                     "IG demo synchronisation failed",

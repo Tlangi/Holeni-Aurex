@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.database import open_database
+from app.market_calendar import market_data_stale, operational_session_state
 
 
 MARKET_PRIORITY = {
@@ -224,6 +225,24 @@ def failed_jobs_for_revalidation(settings: Settings) -> list[dict[str, object]]:
         return list(cursor.fetchall())
 
 
+def live_feed_current(markets: list[dict[str, object]], holiday_rows: list[dict[str, object]],
+                      *, now: datetime) -> bool:
+    holidays:dict[str,dict[object,object]]={}
+    for row in holiday_rows:
+        holidays.setdefault(str(row["calendar_code"]), {})[row["holiday_date"]] = row["session_close_local"]
+    for market in markets:
+        session=operational_session_state(
+            now,calendar_code=str(market["calendar_code"]),
+            market_timezone=str(market["market_timezone"]),
+            session_open=market["session_open_local"],session_close=market["session_close_local"],
+            symbol=str(market["symbol"]),holidays=holidays.get(str(market["calendar_code"]), {}),
+        )
+        if market_data_stale(market["latest"],now_utc=now,session=session,
+                             freshness=timedelta(minutes=20)):
+            return False
+    return True
+
+
 def resource_gate(settings: Settings, work_root: Path) -> tuple[bool, str]:
     free_gb = shutil.disk_usage(work_root).free / (1024**3)
     if free_gb < settings.historical_backfill_min_free_gb:
@@ -231,10 +250,18 @@ def resource_gate(settings: Settings, work_root: Path) -> tuple[bool, str]:
     try:
         with open_database(settings) as connection:
             cursor=connection.cursor(as_dict=True)
-            cursor.execute("""SELECT MAX(c.open_time_utc) latest FROM app.candles c JOIN app.markets m ON m.market_id=c.market_id
-              WHERE c.timeframe='M5' AND c.completed=1 AND m.enabled=1 AND m.research_enabled=1""")
-            latest=cursor.fetchone()["latest"]
-        if not latest or datetime.now(timezone.utc)-latest.replace(tzinfo=timezone.utc)>timedelta(minutes=20):
+            cursor.execute("""SELECT m.symbol,m.calendar_code,m.market_timezone,
+                     m.session_open_local,m.session_close_local,MAX(c.close_time_utc) latest
+              FROM app.markets m LEFT JOIN app.candles c ON c.market_id=m.market_id
+                AND c.timeframe='M5' AND c.completed=1
+              WHERE m.enabled=1 AND m.research_enabled=1
+              GROUP BY m.market_id,m.symbol,m.calendar_code,m.market_timezone,
+                       m.session_open_local,m.session_close_local""")
+            markets=cursor.fetchall()
+            cursor.execute("""SELECT calendar_code,holiday_date,session_close_local
+                               FROM app.market_holidays""")
+            holiday_rows=cursor.fetchall()
+        if not live_feed_current(markets,holiday_rows,now=datetime.now(timezone.utc)):
             return False,"LIVE_FEED_NOT_CURRENT"
     except Exception:
         return False,"DATABASE_UNAVAILABLE"

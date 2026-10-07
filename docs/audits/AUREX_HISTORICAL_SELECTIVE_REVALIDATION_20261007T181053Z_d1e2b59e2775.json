@@ -1,0 +1,42 @@
+{
+  "authority": "HISTORICAL_FAILED_PARTITION_SELECTIVE_REVALIDATION",
+  "mode": "APPLY",
+  "validation_version": "HISTORICAL_PARTITION_V4_CALENDAR",
+  "generated_at_utc": "2026-10-07T18:10:53.948484+00:00",
+  "linked_legacy_jobs": 0,
+  "market_filter": [
+    "XAUUSD"
+  ],
+  "calendar_candidates_only": true,
+  "eligible_job_count": 3,
+  "download_performed": false,
+  "model_training_performed": false,
+  "broker_submission_authority": false,
+  "results": [
+    {
+      "job_id": "24ece212-c141-4787-8dd1-3a7f30ff4a72",
+      "import_batch_id": "9824e848-7b2b-4b64-829e-751c0c3b5dae",
+      "market": "XAUUSD",
+      "status": "STILL_FAILED",
+      "coverage_percentage": 0.9565217391304348,
+      "detail": "failed_gates=COMPLETENESS_OR_RECENT_GAPS; coverage=95.652174%; invalid_ohlc=0; timestamp_errors=0; recent_gap_count=0"
+    },
+    {
+      "job_id": "b9a68b0d-36fb-4ac5-9a58-2bc1673492c8",
+      "import_batch_id": "5a175976-4efe-4a09-8674-731f35aec744",
+      "market": "XAUUSD",
+      "status": "STILL_FAILED",
+      "coverage_percentage": 0.9565217391304348,
+      "detail": "failed_gates=COMPLETENESS_OR_RECENT_GAPS; coverage=95.652174%; invalid_ohlc=0; timestamp_errors=0; recent_gap_count=0"
+    },
+    {
+      "job_id": "abebd74c-a1bb-452b-a788-dae6b9bfb9d9",
+      "import_batch_id": "451585b2-5c49-47d7-b930-2af2f62bfc54",
+      "market": "XAUUSD",
+      "status": "STILL_FAILED",
+      "coverage_percentage": 0.9565217391304348,
+      "detail": "failed_gates=COMPLETENESS_OR_RECENT_GAPS; coverage=95.652174%; invalid_ohlc=0; timestamp_errors=0; recent_gap_count=0"
+    }
+  ],
+  "report_sha256": "d1e2b59e27756d90dd2356929db3354d08b7118222d55965194802bf4f4514a9"
+}
