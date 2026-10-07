@@ -81,6 +81,10 @@ The macro-readiness defect was traced to an unbalanced `TOP (30)` query: numerou
 
 Germany 40's 40.784447% display was traced to a provenance-denominator defect rather than unexcluded overnight hours. Its calendar already limits expectations to 09:00–17:30 Europe/Berlin and registered XETRA holidays. The canonical calculation nevertheless combined a sparse 2023 Dukascopy range and the recent IG range across one multi-year denominator. Quality now selects one authoritative provenance lane, preferring executable IG evidence, and retains the mixed-provider result separately as a diagnostic. The regenerated Germany 40 M15 snapshot records 1,015 observed and 45 missing regular-session IG candles, or 95.754717% completeness; recent consolidated M5 and M15 continuity remains 100%. The market stays below the governed 99% research threshold and is not promoted from this correction alone.
 
+## Increment 16 status — 7 October 2026
+
+Prospective experiment V3 was preregistered before accessing any V3 economic outcomes. It selects EURUSD, GBPUSD and USDJPY from operational eligibility and authoritative IG completeness above 90%, not from V3 returns. Development is fixed to 30 September 02:00–7 October 18:00 UTC, with the full outcome horizon complete at 20:00 UTC. Future validation is fixed to 8–15 October and untouched holdout to 15–22 October, each with a two-hour outcome-completion gate. The former V2 holdout was never accessed after all candidates failed validation; its dates may be used only as V3 development under the new immutable protocol. Model families, policies, costs, purge, embargo and pass rules are fixed. Validation, holdout, promotion, Shadow activation and broker submission remain closed.
+
 ## Current completion matrix
 
 | Step | Status | Completed evidence | Work still required |
