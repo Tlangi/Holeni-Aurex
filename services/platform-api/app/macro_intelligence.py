@@ -397,12 +397,23 @@ def calculate_currency_scores(settings: Settings, *, cursor: object, now: dateti
     cutoff = now - timedelta(hours=settings.macro_evidence_max_age_hours)
     for currency in ("USD", "EUR", "GBP", "JPY"):
         cursor.execute(
-            """SELECT TOP (30) e.macro_evidence_id,e.title,e.canonical_url,e.classification,
-                      e.currency_score,e.impact,e.published_at_utc,e.retrieved_at_utc,e.scheduled_event_at_utc,
-                      s.evidence_type,s.priority
-               FROM app.macro_evidence e JOIN app.macro_sources s ON s.macro_source_id=e.macro_source_id
-               WHERE s.currency=%s AND s.last_success_at_utc>=%s
-               ORDER BY COALESCE(e.published_at_utc,e.retrieved_at_utc) DESC""",
+            """WITH ranked AS (
+                 SELECT e.macro_evidence_id,e.title,e.canonical_url,e.classification,
+                        e.currency_score,e.impact,e.published_at_utc,e.retrieved_at_utc,
+                        e.scheduled_event_at_utc,s.evidence_type,s.priority,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY s.evidence_type
+                          ORDER BY COALESCE(e.published_at_utc,e.retrieved_at_utc) DESC
+                        ) evidence_rank
+                 FROM app.macro_evidence e
+                 JOIN app.macro_sources s ON s.macro_source_id=e.macro_source_id
+                 WHERE s.currency=%s AND s.last_success_at_utc>=%s
+               )
+               SELECT macro_evidence_id,title,canonical_url,classification,currency_score,
+                      impact,published_at_utc,retrieved_at_utc,scheduled_event_at_utc,
+                      evidence_type,priority
+               FROM ranked WHERE evidence_rank<=10
+               ORDER BY COALESCE(published_at_utc,retrieved_at_utc) DESC""",
             (currency, cutoff),
         )
         evidence = cursor.fetchall()

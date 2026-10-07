@@ -8,6 +8,7 @@ from app.macro_intelligence import (
     _html_item,
     _rss_items,
     _safe_source_url,
+    calculate_currency_scores,
 )
 
 
@@ -55,3 +56,29 @@ def test_calendar_html_extracts_upcoming_event_without_script_content() -> None:
     item = _html_item(payload, source, datetime(2026, 8, 25, tzinfo=timezone.utc))[0]
     assert item["classification"] == "SCHEDULED_RISK"
     assert item["scheduled"].date().isoformat() == "2026-09-15"
+
+
+class _ScoreCursor:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def execute(self, query, _parameters=()):
+        self.queries.append(str(query))
+
+    def fetchall(self):
+        return []
+
+
+def test_currency_score_query_bounds_each_required_evidence_type() -> None:
+    cursor = _ScoreCursor()
+    calculate_currency_scores(
+        type("Settings", (), {"macro_evidence_max_age_hours": 24,
+                               "macro_event_blackout_minutes": 30,
+                               "macro_sync_seconds": 900})(),
+        cursor=cursor,
+        now=datetime(2026, 10, 7, tzinfo=timezone.utc),
+    )
+    evidence_queries = [query for query in cursor.queries if "WITH ranked AS" in query]
+    assert len(evidence_queries) == 4
+    assert all("PARTITION BY s.evidence_type" in query for query in evidence_queries)
+    assert all("evidence_rank<=10" in query for query in evidence_queries)
