@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts.freeze_prospective_v3_development_cohort import validate_protocol
+from scripts.freeze_prospective_v3_executable_outcomes import assert_development_membership
+from app.research_cohort_eligibility import canonical_sha256
 
 
 def _protocol() -> dict[str, object]:
@@ -30,3 +32,44 @@ def test_v3_cohort_protocol_rejects_registration_before_horizon_completion() -> 
     protocol["registered_at_utc"] = "2026-10-07T19:59:59Z"
     with pytest.raises(ValueError, match="chronology"):
         validate_protocol(protocol)
+
+
+def test_v3_outcome_membership_is_bound_to_immutable_cohort() -> None:
+    protocol = _protocol()
+    protocol.update({
+        "markets": ["EURUSD"],
+        "validation_start_inclusive_utc": "2026-10-08T00:00:00Z",
+        "holdout_start_inclusive_utc": "2026-10-15T00:00:00Z",
+    })
+    cohort = {
+        "authority": "IMMUTABLE_NONPROMOTABLE_V3_DEVELOPMENT_COHORT",
+        "protocol_sha256": canonical_sha256(protocol),
+        "markets": [{"market": "EURUSD", "joined": 1}],
+        "members": [{
+            "market": "EURUSD",
+            "decision_at_utc": "2026-10-07T17:45:00Z",
+            "opportunity_id": "example",
+        }],
+    }
+    assert assert_development_membership(protocol, cohort) == cohort["members"]
+
+
+def test_v3_outcome_membership_rejects_post_development_decision() -> None:
+    protocol = _protocol()
+    protocol.update({
+        "markets": ["EURUSD"],
+        "validation_start_inclusive_utc": "2026-10-08T00:00:00Z",
+        "holdout_start_inclusive_utc": "2026-10-15T00:00:00Z",
+    })
+    cohort = {
+        "authority": "IMMUTABLE_NONPROMOTABLE_V3_DEVELOPMENT_COHORT",
+        "protocol_sha256": canonical_sha256(protocol),
+        "markets": [{"market": "EURUSD", "joined": 1}],
+        "members": [{
+            "market": "EURUSD",
+            "decision_at_utc": "2026-10-07T18:00:00Z",
+            "opportunity_id": "late",
+        }],
+    }
+    with pytest.raises(ValueError, match="non-development"):
+        assert_development_membership(protocol, cohort)
