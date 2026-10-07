@@ -77,6 +77,10 @@ The live feed and IG account components recovered to `CURRENT`, with completed M
 
 The macro-readiness defect was traced to an unbalanced `TOP (30)` query: numerous EUR central-bank releases displaced otherwise current inflation and calendar evidence from the score input. Score generation now retains at most ten newest items per required evidence type. A governed recalculation using twelve recently successful official sources produced complete USD, EUR, GBP and JPY coverage, restoring the macro readiness gate to 4/4 without changing trading authority. Demo readiness is now blocked only by zero validated/owner-approved models and zero authoritative broker size increments among the four signal markets. IG's official REST contract exposes minimum deal size but no size-increment field or non-submitting order-validation endpoint; the order endpoint creates a position. Fallback increments remain non-authoritative. Historical completion above 90% does not override failed economic validation.
 
+## Increment 15 status — 7 October 2026
+
+Germany 40's 40.784447% display was traced to a provenance-denominator defect rather than unexcluded overnight hours. Its calendar already limits expectations to 09:00–17:30 Europe/Berlin and registered XETRA holidays. The canonical calculation nevertheless combined a sparse 2023 Dukascopy range and the recent IG range across one multi-year denominator. Quality now selects one authoritative provenance lane, preferring executable IG evidence, and retains the mixed-provider result separately as a diagnostic. The regenerated Germany 40 M15 snapshot records 1,015 observed and 45 missing regular-session IG candles, or 95.754717% completeness; recent consolidated M5 and M15 continuity remains 100%. The market stays below the governed 99% research threshold and is not promoted from this correction alone.
+
 ## Current completion matrix
 
 | Step | Status | Completed evidence | Work still required |

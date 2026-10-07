@@ -163,6 +163,23 @@ def _combined_validation_status(*, failures: int, recent_missing: int) -> str:
     return "PASS"
 
 
+def _authoritative_provider_completeness(
+    provider_diagnostics: dict[str, dict[str, object]],
+) -> tuple[str | None, int, int, float]:
+    """Select one provenance lane so disjoint provider eras do not dilute quality."""
+    if not provider_diagnostics:
+        return None, 0, 0, 0.0
+    provider = "IG" if "IG" in provider_diagnostics else max(
+        provider_diagnostics,
+        key=lambda name: int(provider_diagnostics[name].get("observed_regular_count") or 0),
+    )
+    evidence = provider_diagnostics[provider]
+    observed = int(evidence.get("observed_regular_count") or 0)
+    missing = int(evidence.get("missing_period_count") or 0)
+    expected = observed + missing
+    return provider, observed, missing, observed / expected if expected else 0.0
+
+
 def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> dict[str, object]:
     minutes = 5 if timeframe == "M5" else 15
     with open_database(settings) as connection:
@@ -239,7 +256,10 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
             }
         failures = invalid + nonpositive + future + partial
         expected_regular = observed_regular + missing
-        completeness = observed_regular / expected_regular if expected_regular else 0.0
+        combined_completeness = observed_regular / expected_regular if expected_regular else 0.0
+        authoritative_provider, authoritative_observed, authoritative_missing, completeness = (
+            _authoritative_provider_completeness(provider_diagnostics)
+        )
         status = (
             "FAIL" if failures or completeness < settings.research_segment_minimum_completeness
             else "PASS"
@@ -267,6 +287,10 @@ def validate_market_data(settings: Settings, market_id: str, timeframe: str) -> 
                          "recent_missing_period_count": recent_missing,
                          "regular_session_observed_count": observed_regular,
                          "regular_session_completeness": round(completeness, 8),
+                         "combined_regular_session_completeness": round(combined_completeness, 8),
+                         "authoritative_provider": authoritative_provider,
+                         "authoritative_provider_observed_count": authoritative_observed,
+                         "authoritative_provider_missing_count": authoritative_missing,
                          "minimum_historical_completeness": settings.research_segment_minimum_completeness,
                          "gaps_acknowledged_under_completeness_policy": bool(missing),
                          "features_segmented_at_gaps": True,
