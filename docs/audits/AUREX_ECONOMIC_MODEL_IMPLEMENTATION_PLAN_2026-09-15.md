@@ -85,6 +85,10 @@ Germany 40's 40.784447% display was traced to a provenance-denominator defect ra
 
 Prospective experiment V3 was preregistered before accessing any V3 economic outcomes. It selects EURUSD, GBPUSD and USDJPY from operational eligibility and authoritative IG completeness above 90%, not from V3 returns. Development is fixed to 30 September 02:00–7 October 18:00 UTC, with the full outcome horizon complete at 20:00 UTC. Future validation is fixed to 8–15 October and untouched holdout to 15–22 October, each with a two-hour outcome-completion gate. The former V2 holdout was never accessed after all candidates failed validation; its dates may be used only as V3 development under the new immutable protocol. Model families, policies, costs, purge, embargo and pass rules are fixed. Validation, holdout, promotion, Shadow activation and broker submission remain closed.
 
+## Increment 17 status — 7 October 2026
+
+V3 development membership is frozen from the append-only opportunity ledger after the preregistration and completed development outcome horizon. Evidence hashes were recomputed before inclusion, terminal state had to be `JOINED`, and no economic outcomes were read. The immutable cohort contains EURUSD 229, GBPUSD 289 and USDJPY 334 joined opportunities; all exceed the fixed minimum of 30. Independent verification checks the protocol and cohort hashes, unique identities, summary counts and authority limits. Validation and holdout remain inaccessible, and the artifact grants no training, promotion, Shadow or broker authority by itself.
+
 ## Current completion matrix
 
 | Step | Status | Completed evidence | Work still required |
