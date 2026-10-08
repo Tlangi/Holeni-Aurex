@@ -1,0 +1,967 @@
+{
+  "authority": "NONPROMOTABLE_DEVELOPMENT_ONLY_TOURNAMENT",
+  "broker_submission_authority": false,
+  "feature_names": [
+    "m15_return_window",
+    "m15_volatility",
+    "m1_return_window",
+    "m1_spread_bps",
+    "m1_volatility",
+    "m5_return_window",
+    "m5_volatility"
+  ],
+  "holdout_accessed": false,
+  "markets": [
+    {
+      "assessment_count": 69,
+      "candidates": [
+        {
+          "assessment_action_counts": {
+            "1": 7,
+            "2": 62
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.019546502874540073,
+              "max_compounded_drawdown": 0.019546502874540073,
+              "no_trade_count": 0,
+              "profit_factor": 0.3892825189131957,
+              "trade_count": 69,
+              "trade_expectancy": -0.0002858290252240688
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.02498576772049088,
+              "max_compounded_drawdown": 0.02498576772049088,
+              "no_trade_count": 0,
+              "profit_factor": 0.29979991964513647,
+              "trade_count": 69,
+              "trade_expectancy": -0.0003664280392365237
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 28,
+            "1": 52,
+            "2": 73
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 39,
+            "2": 30
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.009464333933913882,
+              "max_compounded_drawdown": 0.01690953368042214,
+              "no_trade_count": 0,
+              "profit_factor": 0.6482123185443406,
+              "trade_count": 69,
+              "trade_expectancy": -0.00013755974545776584
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.014958719341555127,
+              "max_compounded_drawdown": 0.02062808337188826,
+              "no_trade_count": 0,
+              "profit_factor": 0.5029677672060865,
+              "trade_count": 69,
+              "trade_expectancy": -0.0002181587594702208
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 28,
+            "1": 52,
+            "2": 73
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 6,
+            "1": 35,
+            "2": 28
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.008143425997417686,
+              "max_compounded_drawdown": 0.015257220361268198,
+              "no_trade_count": 6,
+              "profit_factor": 0.6509439813331613,
+              "trade_count": 63,
+              "trade_expectancy": -0.00012955551822552586
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.013167902119643027,
+              "max_compounded_drawdown": 0.018665546896532548,
+              "no_trade_count": 6,
+              "profit_factor": 0.49474420272365793,
+              "trade_count": 63,
+              "trade_expectancy": -0.00021015453223798076
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 28,
+            "1": 52,
+            "2": 73
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 7,
+            "2": 62
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.02364626110505641,
+              "max_compounded_drawdown": 0.026982047832744483,
+              "no_trade_count": 0,
+              "profit_factor": 0.45714499116508656,
+              "trade_count": 69,
+              "trade_expectancy": -0.00034626424433772756
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.029063111235014594,
+              "max_compounded_drawdown": 0.03222466038754548,
+              "no_trade_count": 0,
+              "profit_factor": 0.383362555250723,
+              "trade_count": 69,
+              "trade_expectancy": -0.00042686325835018254
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 23,
+            "1": 55,
+            "2": 75
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 39,
+            "2": 30
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.021647036616192605,
+              "max_compounded_drawdown": 0.03461879691808478,
+              "no_trade_count": 0,
+              "profit_factor": 0.485503315911398,
+              "trade_count": 69,
+              "trade_expectancy": -0.0003166331221128275
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.027074818028154812,
+              "max_compounded_drawdown": 0.03819425112800634,
+              "no_trade_count": 0,
+              "profit_factor": 0.4021939748172505,
+              "trade_count": 69,
+              "trade_expectancy": -0.00039723213612528245
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 23,
+            "1": 55,
+            "2": 75
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 2,
+            "1": 38,
+            "2": 29
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.018789031971508274,
+              "max_compounded_drawdown": 0.031815975295016674,
+              "no_trade_count": 2,
+              "profit_factor": 0.5297506669358586,
+              "trade_count": 67,
+              "trade_expectancy": -0.00028256265358846984
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.02407512890985064,
+              "max_compounded_drawdown": 0.03532383279572737,
+              "no_trade_count": 2,
+              "profit_factor": 0.4393872949778394,
+              "trade_count": 67,
+              "trade_expectancy": -0.0003631616676009248
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 23,
+            "1": 55,
+            "2": 75
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 10,
+            "2": 59
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.020631646584117647,
+              "max_compounded_drawdown": 0.023977732971352705,
+              "no_trade_count": 0,
+              "profit_factor": 0.5205364579343681,
+              "trade_count": 69,
+              "trade_expectancy": -0.00030148085148754385
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.02606498046364747,
+              "max_compounded_drawdown": 0.02923629208159611,
+              "no_trade_count": 0,
+              "profit_factor": 0.4368766921344688,
+              "trade_count": 69,
+              "trade_expectancy": -0.00038207986549999883
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 13,
+            "1": 64,
+            "2": 76
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 40,
+            "2": 29
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.020899044448059012,
+              "max_compounded_drawdown": 0.03516848212032829,
+              "no_trade_count": 0,
+              "profit_factor": 0.5190349617011513,
+              "trade_count": 69,
+              "trade_expectancy": -0.00030542236833782315
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.02633091637801377,
+              "max_compounded_drawdown": 0.038664462564053474,
+              "no_trade_count": 0,
+              "profit_factor": 0.4328018298958444,
+              "trade_count": 69,
+              "trade_expectancy": -0.00038602138235027813
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 13,
+            "1": 64,
+            "2": 76
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 1,
+            "1": 41,
+            "2": 27
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.013424498793171535,
+              "max_compounded_drawdown": 0.0282108177440138,
+              "no_trade_count": 1,
+              "profit_factor": 0.6571605105598657,
+              "trade_count": 68,
+              "trade_expectancy": -0.00019808427495823024
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.018818154354272476,
+              "max_compounded_drawdown": 0.0314972852193095,
+              "no_trade_count": 1,
+              "profit_factor": 0.5508336570189838,
+              "trade_count": 68,
+              "trade_expectancy": -0.0002786832889706852
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 13,
+            "1": 64,
+            "2": 76
+          }
+        }
+      ],
+      "common_evaluable": 229,
+      "excluded_from_comparison": 0,
+      "first_assessment_decision_utc": "2026-10-06T09:15:07.148000+00:00",
+      "joined": 229,
+      "market": "EURUSD",
+      "selected_development_candidate": null,
+      "status": "DEVELOPMENT_ONLY_COMPLETE",
+      "training_count": 153
+    },
+    {
+      "assessment_count": 87,
+      "candidates": [
+        {
+          "assessment_action_counts": {
+            "1": 55,
+            "2": 32
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.015027378658621027,
+              "max_compounded_drawdown": 0.01831730539221709,
+              "no_trade_count": 0,
+              "profit_factor": 0.5293893845667509,
+              "trade_count": 87,
+              "trade_expectancy": -0.00017384109553870975
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.03139799085386219,
+              "max_compounded_drawdown": 0.03167729120570506,
+              "no_trade_count": 0,
+              "profit_factor": 0.2634991270612235,
+              "trade_count": 87,
+              "trade_expectancy": -0.00036643313284047575
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 49,
+            "1": 73,
+            "2": 73
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 6,
+            "1": 13,
+            "2": 68
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.00996450566634699,
+              "max_compounded_drawdown": 0.013259014727385554,
+              "no_trade_count": 6,
+              "profit_factor": 0.658377147675849,
+              "trade_count": 81,
+              "trade_expectancy": -0.0001234157874384204
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.025292520059645884,
+              "max_compounded_drawdown": 0.025292520059645884,
+              "no_trade_count": 6,
+              "profit_factor": 0.3559273908331567,
+              "trade_count": 81,
+              "trade_expectancy": -0.00031600782474018645
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 49,
+            "1": 73,
+            "2": 73
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 11,
+            "1": 27,
+            "2": 49
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.0065261858273528706,
+              "max_compounded_drawdown": 0.009528218407382272,
+              "no_trade_count": 11,
+              "profit_factor": 0.7294286863460223,
+              "trade_count": 76,
+              "trade_expectancy": -8.595785601421037e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.020964370248022224,
+              "max_compounded_drawdown": 0.020964370248022224,
+              "no_trade_count": 11,
+              "profit_factor": 0.37165544610855256,
+              "trade_count": 76,
+              "trade_expectancy": -0.0002785498933159764
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 49,
+            "1": 73,
+            "2": 73
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 53,
+            "2": 34
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.019065811431644875,
+              "max_compounded_drawdown": 0.022606923885518642,
+              "no_trade_count": 0,
+              "profit_factor": 0.5528194106877173,
+              "trade_count": 87,
+              "trade_expectancy": -0.0002208563779920895
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.03537007015968785,
+              "max_compounded_drawdown": 0.035935006959164226,
+              "no_trade_count": 0,
+              "profit_factor": 0.3308549447668745,
+              "trade_count": 87,
+              "trade_expectancy": -0.00041344841529385553
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 39,
+            "1": 80,
+            "2": 76
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 5,
+            "1": 21,
+            "2": 61
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.00558374947853324,
+              "max_compounded_drawdown": 0.0218449874049676,
+              "no_trade_count": 5,
+              "profit_factor": 0.8402756143926189,
+              "trade_count": 82,
+              "trade_expectancy": -6.787031871793908e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.021167310122567895,
+              "max_compounded_drawdown": 0.02954322190106154,
+              "no_trade_count": 5,
+              "profit_factor": 0.5173819154339645,
+              "trade_count": 82,
+              "trade_expectancy": -0.0002604623560197051
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 39,
+            "1": 80,
+            "2": 76
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 13,
+            "1": 16,
+            "2": 58
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.004305653780593666,
+              "max_compounded_drawdown": 0.012330714142468224,
+              "no_trade_count": 13,
+              "profit_factor": 1.1461710362085313,
+              "trade_count": 74,
+              "trade_expectancy": 5.856259249328135e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.009906555484603174,
+              "max_compounded_drawdown": 0.020102001184352902,
+              "no_trade_count": 13,
+              "profit_factor": 0.7381462268038865,
+              "trade_count": 74,
+              "trade_expectancy": -0.00013402944480848467
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 39,
+            "1": 80,
+            "2": 76
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 56,
+            "2": 31
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.017624227114616975,
+              "max_compounded_drawdown": 0.022505194995812553,
+              "no_trade_count": 0,
+              "profit_factor": 0.5912025323181747,
+              "trade_count": 87,
+              "trade_expectancy": -0.00020391880980245898
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.03395217430201736,
+              "max_compounded_drawdown": 0.03467107348666464,
+              "no_trade_count": 0,
+              "profit_factor": 0.35975048871177084,
+              "trade_count": 87,
+              "trade_expectancy": -0.000396510847104225
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 26,
+            "1": 89,
+            "2": 80
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 26,
+            "2": 61
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.0008400562901043074,
+              "max_compounded_drawdown": 0.02269893536208399,
+              "no_trade_count": 0,
+              "profit_factor": 1.0268497644382442,
+              "trade_count": 87,
+              "trade_expectancy": 1.0079694471754788e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.015791252560501512,
+              "max_compounded_drawdown": 0.030553638329040147,
+              "no_trade_count": 0,
+              "profit_factor": 0.6166982554114994,
+              "trade_count": 87,
+              "trade_expectancy": -0.00018251234283001125
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 26,
+            "1": 89,
+            "2": 80
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 4,
+            "1": 23,
+            "2": 60
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.0014860577555158017,
+              "max_compounded_drawdown": 0.016553155777363323,
+              "no_trade_count": 4,
+              "profit_factor": 1.046740947161844,
+              "trade_count": 83,
+              "trade_expectancy": 1.8368114144500222e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.014396805974896676,
+              "max_compounded_drawdown": 0.024855657151331742,
+              "no_trade_count": 4,
+              "profit_factor": 0.6510382872933258,
+              "trade_count": 83,
+              "trade_expectancy": -0.00017422392315726582
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 26,
+            "1": 89,
+            "2": 80
+          }
+        }
+      ],
+      "common_evaluable": 289,
+      "excluded_from_comparison": 0,
+      "first_assessment_decision_utc": "2026-10-05T17:30:10.966000+00:00",
+      "joined": 289,
+      "market": "GBPUSD",
+      "selected_development_candidate": null,
+      "status": "DEVELOPMENT_ONLY_COMPLETE",
+      "training_count": 195
+    },
+    {
+      "assessment_count": 101,
+      "candidates": [
+        {
+          "assessment_action_counts": {
+            "0": 2,
+            "1": 24,
+            "2": 75
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.004646916843091375,
+              "max_compounded_drawdown": 0.005681274999262833,
+              "no_trade_count": 2,
+              "profit_factor": 1.2422248570390955,
+              "trade_count": 99,
+              "trade_expectancy": 4.6954857336364355e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.004838522642365284,
+              "max_compounded_drawdown": 0.011722557904178579,
+              "no_trade_count": 2,
+              "profit_factor": 0.8005241835911437,
+              "trade_count": 99,
+              "trade_expectancy": -4.8867445856007053e-05
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 37,
+            "1": 106,
+            "2": 83
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 19,
+            "2": 82
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.0010952215133372967,
+              "max_compounded_drawdown": 0.007250347285469025,
+              "no_trade_count": 0,
+              "profit_factor": 1.0540490249652634,
+              "trade_count": 101,
+              "trade_expectancy": 1.0954873854957449e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.008547054832943046,
+              "max_compounded_drawdown": 0.014385636910349118,
+              "no_trade_count": 0,
+              "profit_factor": 0.6684509593861769,
+              "trade_count": 101,
+              "trade_expectancy": -8.486742933741397e-05
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 37,
+            "1": 106,
+            "2": 83
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 8,
+            "1": 15,
+            "2": 78
+          },
+          "development_selectable": false,
+          "family": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": -0.0011009573781013415,
+              "max_compounded_drawdown": 0.007908848601580825,
+              "no_trade_count": 8,
+              "profit_factor": 0.9439089732794166,
+              "trade_count": 93,
+              "trade_expectancy": -1.1732670416272726e-05
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": -0.0099636027433746,
+              "max_compounded_drawdown": 0.01452419868043831,
+              "no_trade_count": 8,
+              "profit_factor": 0.5941071776162337,
+              "trade_count": 93,
+              "trade_expectancy": -0.00010755497360864413
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 37,
+            "1": 106,
+            "2": 83
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 1,
+            "1": 22,
+            "2": 78
+          },
+          "development_selectable": true,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.017152872140034026,
+              "max_compounded_drawdown": 0.008116921443792457,
+              "no_trade_count": 1,
+              "profit_factor": 1.7561637931771936,
+              "trade_count": 100,
+              "trade_expectancy": 0.00017035342755124803
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": 0.007454004054691987,
+              "max_compounded_drawdown": 0.009939180220488774,
+              "no_trade_count": 1,
+              "profit_factor": 1.2746468652128882,
+              "trade_count": 100,
+              "trade_expectancy": 7.45311243588766e-05
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 35,
+            "1": 107,
+            "2": 84
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 11,
+            "2": 90
+          },
+          "development_selectable": true,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.013278805813039085,
+              "max_compounded_drawdown": 0.00949037948603317,
+              "no_trade_count": 0,
+              "profit_factor": 1.5173315290849558,
+              "trade_count": 101,
+              "trade_expectancy": 0.0001308959784815232
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": 0.003520342178172431,
+              "max_compounded_drawdown": 0.013186154124205344,
+              "no_trade_count": 0,
+              "profit_factor": 1.116476610642984,
+              "trade_count": 101,
+              "trade_expectancy": 3.507367528915179e-05
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 35,
+            "1": 107,
+            "2": 84
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 5,
+            "1": 9,
+            "2": 87
+          },
+          "development_selectable": true,
+          "family": "ATR_STOP_1_5_TARGET_2R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.010747449895965655,
+              "max_compounded_drawdown": 0.009046943359116601,
+              "no_trade_count": 5,
+              "profit_factor": 1.4463390910521856,
+              "trade_count": 96,
+              "trade_expectancy": 0.00011162339601342431
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": 0.0014928598773538138,
+              "max_compounded_drawdown": 0.012649719996113128,
+              "no_trade_count": 5,
+              "profit_factor": 1.0529117411635993,
+              "trade_count": 96,
+              "trade_expectancy": 1.5801092821052907e-05
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 35,
+            "1": 107,
+            "2": 84
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 30,
+            "2": 71
+          },
+          "development_selectable": true,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.011819241493042476,
+              "max_compounded_drawdown": 0.00912437947386928,
+              "no_trade_count": 0,
+              "profit_factor": 1.4412021611820398,
+              "trade_count": 101,
+              "trade_expectancy": 0.00011663725207779612
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": 0.0020746957559383272,
+              "max_compounded_drawdown": 0.010906706189986702,
+              "no_trade_count": 0,
+              "profit_factor": 1.0668318958133236,
+              "trade_count": 101,
+              "trade_expectancy": 2.0814948885424723e-05
+            }
+          },
+          "model": "LOGISTIC_REGRESSION",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 25,
+            "1": 113,
+            "2": 88
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "1": 9,
+            "2": 92
+          },
+          "development_selectable": true,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.01550408651740387,
+              "max_compounded_drawdown": 0.00854296047084446,
+              "no_trade_count": 0,
+              "profit_factor": 1.6178141358566878,
+              "trade_count": 101,
+              "trade_expectancy": 0.00015263134723691855
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": 0.005724403415797941,
+              "max_compounded_drawdown": 0.012242179627089058,
+              "no_trade_count": 0,
+              "profit_factor": 1.194348539515008,
+              "trade_count": 101,
+              "trade_expectancy": 5.680904404454716e-05
+            }
+          },
+          "model": "RANDOM_FOREST",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 25,
+            "1": 113,
+            "2": 88
+          }
+        },
+        {
+          "assessment_action_counts": {
+            "0": 2,
+            "1": 10,
+            "2": 89
+          },
+          "development_selectable": true,
+          "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+          "metrics": {
+            "NORMAL_P75": {
+              "cumulative_compounded_return": 0.0182871560648048,
+              "max_compounded_drawdown": 0.007272569131755715,
+              "no_trade_count": 2,
+              "profit_factor": 1.8004826984038802,
+              "trade_count": 99,
+              "trade_expectancy": 0.0001833525468023429
+            },
+            "STRESSED_P95": {
+              "cumulative_compounded_return": 0.008674233246515062,
+              "max_compounded_drawdown": 0.010786838534940467,
+              "no_trade_count": 2,
+              "profit_factor": 1.3203627160137117,
+              "trade_count": 99,
+              "trade_expectancy": 8.753024360997152e-05
+            }
+          },
+          "model": "HGB",
+          "status": "ASSESSED_DEVELOPMENT_ONLY",
+          "training_class_counts": {
+            "0": 25,
+            "1": 113,
+            "2": 88
+          }
+        }
+      ],
+      "common_evaluable": 334,
+      "excluded_from_comparison": 0,
+      "first_assessment_decision_utc": "2026-10-06T10:00:16.769000+00:00",
+      "joined": 334,
+      "market": "USDJPY",
+      "selected_development_candidate": {
+        "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+        "model": "HGB"
+      },
+      "status": "DEVELOPMENT_ONLY_COMPLETE",
+      "training_count": 226
+    }
+  ],
+  "model_promotion": "NONE",
+  "outcome_manifest_sha256": "6fc1638d5138e43d8c0dd6c42216501b4c226e7485bea3180ec1b775319752c1",
+  "prospective_protocol_sha256": "f4b3ca6ef5f7cff098f71e8dade198abf659e0a544a5738a43edea7e46faeb8b",
+  "report_sha256": "506d98c72da89c6509e1f5fcec5981dee745dbeeb08a63c14ff3460c43dbb582",
+  "validation_accessed": false
+}

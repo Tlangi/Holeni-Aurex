@@ -1,0 +1,16 @@
+{
+  "authority": "PRE_REGISTERED_NONPROMOTABLE_SELECTED_MODEL_FREEZE",
+  "version": "AUREX_SELECTED_PROSPECTIVE_MODEL_FREEZE_V3",
+  "registered_at_utc": "2026-10-08T00:03:03Z",
+  "source_tournament_report_sha256": "506d98c72da89c6509e1f5fcec5981dee745dbeeb08a63c14ff3460c43dbb582",
+  "source_outcome_manifest_sha256": "6fc1638d5138e43d8c0dd6c42216501b4c226e7485bea3180ec1b775319752c1",
+  "selection": "Use only the exactly selected market, policy family and model class pairs recorded in the immutable V3 development tournament; markets without a selection remain without a model artifact.",
+  "refit": "Fit each selected fixed-hyperparameter model on every common-evaluable opportunity in its frozen V3 development market cohort, including the prior development assessment rows. Use only NORMAL_P75 net returns to define argmax(NO_TRADE,LONG,SHORT) targets; ties choose NO_TRADE then LONG. No validation or holdout feature or outcome may be read.",
+  "feature_order": "Use the exact ordered feature_names from the immutable V3 tournament report.",
+  "serialisation": "One joblib binary per selected market, model, and policy with SHA-256 and training-membership/prediction hashes in a no-overwrite manifest; loading must verify the binary hash first.",
+  "validation_start_utc": "2026-10-08T00:00:00Z",
+  "validation_end_exclusive_utc": "2026-10-15T00:00:00Z",
+  "holdout_start_utc": "2026-10-15T00:00:00Z",
+  "model_promotion": "NONE",
+  "broker_submission_authority": false
+}

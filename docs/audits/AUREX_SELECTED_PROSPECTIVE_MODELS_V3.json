@@ -1,0 +1,45 @@
+{
+  "authority": "FROZEN_NONPROMOTABLE_PROSPECTIVE_SELECTED_MODELS",
+  "broker_submission_authority": false,
+  "cohort_protocol_sha256": "f4b3ca6ef5f7cff098f71e8dade198abf659e0a544a5738a43edea7e46faeb8b",
+  "feature_names": [
+    "m15_return_window",
+    "m15_volatility",
+    "m1_return_window",
+    "m1_spread_bps",
+    "m1_volatility",
+    "m5_return_window",
+    "m5_volatility"
+  ],
+  "freeze_protocol_sha256": "f4efcea5f86b6dd593a7214d604392a5d9eb4adacef8d183b7c180919efacab3",
+  "holdout_accessed": false,
+  "joblib_version": "1.5.3",
+  "manifest_sha256": "3efd6a7ca04c7f986646abcef64cd3e91409617983c8c0d948707f509b2bf947",
+  "model_promotion": "NONE",
+  "models": [
+    {
+      "artifact_file": "AUREX_SELECTED_PROSPECTIVE_USDJPY_V3.joblib",
+      "artifact_sha256": "eac6d020d2eadac606b44e3418ccfb02e8eb3b7c1701b981d263829e6c4c3222",
+      "family": "ATR_STOP_2_TARGET_1_5R_120M_V1",
+      "market": "USDJPY",
+      "model": "HGB",
+      "training_class_counts": {
+        "0": 43,
+        "1": 146,
+        "2": 145
+      },
+      "training_count": 334,
+      "training_first_decision_utc": "2026-09-30T02:30:06.242000+00:00",
+      "training_last_decision_utc": "2026-10-07T17:45:11.602000+00:00",
+      "training_opportunity_ids_sha256": "3496c7d14283c34be66cc9c1a3a24871a31e00211a964463d04341208b593649",
+      "training_predictions_sha256": "5eb9293d94edaaf30a203562a1daaf0673612323db5b621462560cf0f0e0dc6f",
+      "training_sha256": "e753200891197f2e126b2ba21f1b5b29d95094348d848e636233d3798984edd5"
+    }
+  ],
+  "outcome_manifest_sha256": "6fc1638d5138e43d8c0dd6c42216501b4c226e7485bea3180ec1b775319752c1",
+  "python_version": "3.12.10",
+  "scikit_learn_version": "1.9.0",
+  "tournament_report_sha256": "506d98c72da89c6509e1f5fcec5981dee745dbeeb08a63c14ff3460c43dbb582",
+  "training_source": "FROZEN_DEVELOPMENT_ONLY",
+  "validation_accessed": false
+}
