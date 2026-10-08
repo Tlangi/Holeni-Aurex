@@ -14,6 +14,8 @@ from app.config import get_settings
 from app.observability import configure_logging
 from scripts.run_prospective_accumulation_cycle import run_cycle
 
+CYCLE_INTERVAL_SECONDS = 900
+
 
 if __name__ == "__main__":
     settings = get_settings()
@@ -27,4 +29,6 @@ if __name__ == "__main__":
             logger.info("prospective accumulation cycle", extra={"result": run_cycle()})
         except Exception:
             logger.exception("prospective accumulation cycle failed")
-        stopped.wait(300)
+        # M15 opportunities can only advance on a new completed M15 boundary.
+        # Polling every five minutes repeated the same full nine-market scan.
+        stopped.wait(CYCLE_INTERVAL_SECONDS)
