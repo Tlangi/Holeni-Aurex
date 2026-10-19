@@ -86,12 +86,6 @@ class ShadowTradingWorker:
         if now_clock - self._last_rules >= self.settings.broker_rule_sync_seconds:
             self._synchronize_rules()
             self._last_rules = now_clock
-        if now_clock - self._last_quality >= self.settings.market_quality_check_seconds:
-            self._audit_market_quality()
-            self._last_quality = now_clock
-        if now_clock - self._last_training >= self.settings.model_training_check_seconds:
-            self._train_models()
-            self._last_training = now_clock
         if now_clock - self._last_macro >= self.settings.macro_sync_seconds:
             self._synchronize_macro()
             self._last_macro = now_clock
@@ -125,6 +119,18 @@ class ShadowTradingWorker:
             "trading_engine", "CURRENT",
             f"Shadow worker running; outcomes={len(all_outcomes)}, blocked={blocked}; broker submission unavailable",
         )
+        # Research maintenance is deliberately last.  Quality audits and model
+        # fitting are much heavier than the operational signal path and must not
+        # delay broker-rule, macro, decision, or trading-engine heartbeats.
+        if now_clock - self._last_quality >= self.settings.market_quality_check_seconds:
+            self._audit_market_quality()
+            self._last_quality = now_clock
+        if (
+            self.settings.automatic_model_training_enabled
+            and now_clock - self._last_training >= self.settings.model_training_check_seconds
+        ):
+            self._train_models()
+            self._last_training = now_clock
         logger.info(
             "shadow cycle completed",
             extra={"worker": "shadow_trading", "operation": "shadow.cycle", "result": f"OUTCOMES_{len(all_outcomes)}"},

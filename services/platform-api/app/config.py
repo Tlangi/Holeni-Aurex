@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     stale_after_seconds: int = 180
     shadow_cycle_seconds: int = 30
     broker_rule_sync_seconds: int = 900
+    # Governed experiments are trained by explicit freeze/replay commands.  The
+    # operational signal worker must not launch the legacy trainer on startup.
+    automatic_model_training_enabled: bool = False
     model_training_check_seconds: int = 21600
     model_minimum_rows: int = 2000
     research_model_minimum_rows: int = 500
