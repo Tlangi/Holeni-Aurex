@@ -1,0 +1,62 @@
+{
+  "authority": "PRE_REGISTERED_NONPROMOTABLE_PROSPECTIVE_RESEARCH",
+  "protocol_version": "AUREX_PROSPECTIVE_EXECUTABLE_COHORT_V4",
+  "registered_at_utc": "2026-10-20T17:25:00Z",
+  "reason": "V3's multiclass action selector failed locked after-cost validation by trading too broadly. V4 tests one materially different selective trend-pullback meta-label hypothesis, with direction fixed before model fitting and the model limited to TRADE or NO_TRADE.",
+  "outcome_access_before_registration": false,
+  "markets": [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY"
+  ],
+  "market_selection": "The same three signal-enabled FX markets selected before V3 outcomes. No V4 market is selected using V4 returns.",
+  "membership_source": "Append-only app.prospective_opportunity_events rows whose latest terminal state is JOINED under AUREX_PROSPECTIVE_OPPORTUNITY_JOIN_V1 and whose decision timestamp falls inside the fixed development interval. Freeze all matching identities before reading V4 outcomes.",
+  "minimum_joined_per_market": 30,
+  "development_start_inclusive_utc": "2026-10-20T17:30:00Z",
+  "development_end_exclusive_utc": "2026-10-27T17:30:00Z",
+  "development_outcome_horizon_complete_utc": "2026-10-27T19:30:00Z",
+  "validation_start_inclusive_utc": "2026-10-27T19:30:00Z",
+  "validation_end_exclusive_utc": "2026-11-03T19:30:00Z",
+  "validation_outcome_horizon_complete_utc": "2026-11-03T21:30:00Z",
+  "holdout_start_inclusive_utc": "2026-11-03T21:30:00Z",
+  "holdout_end_exclusive_utc": "2026-11-10T21:30:00Z",
+  "holdout_outcome_horizon_complete_utc": "2026-11-10T23:30:00Z",
+  "boundary_purge_minutes": 120,
+  "boundary_embargo_minutes": 120,
+  "hypothesis_version": "TREND_PULLBACK_META_V1",
+  "signal_rule": "M15 and M5 return-window signs must agree and be non-zero; M1 return-window sign must oppose that trend. Direction is LONG for positive aligned trend and SHORT for negative aligned trend. All other opportunities are deterministic NO_TRADE and never enter model fitting.",
+  "derived_feature_order": [
+    "m15_trend_strength",
+    "m5_trend_strength",
+    "m1_pullback_strength",
+    "m5_m15_volatility_ratio",
+    "m1_spread_bps"
+  ],
+  "derived_feature_formulas": {
+    "m15_trend_strength": "direction * m15_return_window / max(m15_volatility, 1e-12)",
+    "m5_trend_strength": "direction * m5_return_window / max(m5_volatility, 1e-12)",
+    "m1_pullback_strength": "-direction * m1_return_window / max(m1_volatility, 1e-12)",
+    "m5_m15_volatility_ratio": "m5_volatility / max(m15_volatility, 1e-12)",
+    "m1_spread_bps": "unchanged point-in-time feature"
+  },
+  "execution_policy": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+  "cost_policy_source": "IG_ZA_SPREAD_ONLY_NO_ROLLOVER_COHORT_V1 using development-frozen NORMAL_P75 and STRESSED_P95 costs; validation and holdout may not recalibrate costs",
+  "model": "STANDARD_SCALER_PLUS_LOGISTIC_REGRESSION",
+  "model_parameters": {
+    "class_weight": "balanced",
+    "max_iter": 1000,
+    "random_state": 41
+  },
+  "target": "TRADE only when the fixed-direction executable net return is positive under both NORMAL_P75 and STRESSED_P95; otherwise NO_TRADE",
+  "trade_probability_threshold": 0.65,
+  "development_split": "Chronological 70/30 split after applying the 120-minute purge. No shuffle, tuning, alternate threshold, alternate policy or alternate model.",
+  "development_rule": "A market may freeze one binary only if the development assessment has at least 20 executed trades, PF above 1, expectancy above 0 and maximum compounded drawdown at or below 3 percent under both frozen cost sensitivities.",
+  "validation_rule": "Replay the locked binary, fixed direction rule, feature formulas, policy and 0.65 threshold without fitting or retuning. Require at least 20 trades, PF above 1, expectancy above 0 and maximum compounded drawdown at or below 3 percent under both frozen cost sensitivities.",
+  "holdout_rule": "Holdout remains inaccessible unless the independently verified validation report passes. Replay unchanged under the identical validation gates.",
+  "forward_shadow_rule": "A holdout-passing candidate remains non-executable until prospective forward Shadow evidence satisfies the active forward policy.",
+  "validation_access_before_window_close": false,
+  "holdout_access_before_validation_pass": false,
+  "historical_backfill_credit": false,
+  "model_promotion": "NONE",
+  "broker_submission_authority": false
+}
