@@ -1,0 +1,188 @@
+{
+  "authority": "V4_DEVELOPMENT_ONLY_NONPROMOTABLE",
+  "broker_submission_authority": false,
+  "execution_policy": "ATR_STOP_1_TARGET_1_5R_60M_V1",
+  "feature_order": [
+    "m15_trend_strength",
+    "m5_trend_strength",
+    "m1_pullback_strength",
+    "m5_m15_volatility_ratio",
+    "m1_spread_bps"
+  ],
+  "frozen_binaries": [],
+  "holdout_accessed": false,
+  "hypothesis_version": "TREND_PULLBACK_META_V1",
+  "markets": [
+    {
+      "assessment_action_counts": {
+        "NO_TRADE": 1,
+        "TRADE": 14
+      },
+      "assessment_count": 15,
+      "assessment_first_decision_utc": "2026-10-26T07:45:07.843000+00:00",
+      "assessment_predictions_sha256": "df56d9adda4a4fbc848f7c585d9173c88ca01d2941ea1f1531fa12246baa0b2b",
+      "candidate_frozen": false,
+      "checks": {
+        "NORMAL_P75": {
+          "maximum_drawdown": true,
+          "minimum_trades": false,
+          "positive_expectancy": false,
+          "profit_factor": false
+        },
+        "STRESSED_P95": {
+          "maximum_drawdown": true,
+          "minimum_trades": false,
+          "positive_expectancy": false,
+          "profit_factor": false
+        }
+      },
+      "gates_passed": false,
+      "hypothesis_eligible": 50,
+      "joined": 206,
+      "market": "EURUSD",
+      "metrics": {
+        "NORMAL_P75": {
+          "cumulative_compounded_return": -0.0006414523166751174,
+          "max_compounded_drawdown": 0.0032935354358593454,
+          "no_trade_count": 1,
+          "profit_factor": 0.8463283144058837,
+          "trade_count": 14,
+          "trade_expectancy": -4.5673008856788425e-05
+        },
+        "STRESSED_P95": {
+          "cumulative_compounded_return": -0.001773001730340562,
+          "max_compounded_drawdown": 0.003938812052638819,
+          "no_trade_count": 1,
+          "profit_factor": 0.6314194423047579,
+          "trade_count": 14,
+          "trade_expectancy": -0.00012658867198173397
+        }
+      },
+      "status": "DEVELOPMENT_REJECTED",
+      "trade_probability_threshold": 0.65,
+      "training_class_counts": {
+        "0": 22,
+        "1": 11
+      },
+      "training_count": 33
+    },
+    {
+      "assessment_action_counts": {
+        "NO_TRADE": 14,
+        "TRADE": 0
+      },
+      "assessment_count": 14,
+      "assessment_first_decision_utc": "2026-10-26T09:00:13.526000+00:00",
+      "assessment_predictions_sha256": "787e83886893980b2d548240307ac4ef71c1744f0b3c24a4663df1003d080e0a",
+      "candidate_frozen": false,
+      "checks": {
+        "NORMAL_P75": {
+          "maximum_drawdown": true,
+          "minimum_trades": false,
+          "positive_expectancy": false,
+          "profit_factor": false
+        },
+        "STRESSED_P95": {
+          "maximum_drawdown": true,
+          "minimum_trades": false,
+          "positive_expectancy": false,
+          "profit_factor": false
+        }
+      },
+      "gates_passed": false,
+      "hypothesis_eligible": 44,
+      "joined": 190,
+      "market": "GBPUSD",
+      "metrics": {
+        "NORMAL_P75": {
+          "cumulative_compounded_return": 0.0,
+          "max_compounded_drawdown": 0.0,
+          "no_trade_count": 14,
+          "profit_factor": null,
+          "trade_count": 0,
+          "trade_expectancy": null
+        },
+        "STRESSED_P95": {
+          "cumulative_compounded_return": 0.0,
+          "max_compounded_drawdown": 0.0,
+          "no_trade_count": 14,
+          "profit_factor": null,
+          "trade_count": 0,
+          "trade_expectancy": null
+        }
+      },
+      "status": "DEVELOPMENT_REJECTED",
+      "trade_probability_threshold": 0.65,
+      "training_class_counts": {
+        "0": 22,
+        "1": 5
+      },
+      "training_count": 27
+    },
+    {
+      "assessment_action_counts": {
+        "NO_TRADE": 17,
+        "TRADE": 1
+      },
+      "assessment_count": 18,
+      "assessment_first_decision_utc": "2026-10-27T02:15:13.754000+00:00",
+      "assessment_predictions_sha256": "841b56ffb9ec5a320cfcb41b5446f2b22876f240ee2b4905deca2416a15d9aa0",
+      "candidate_frozen": false,
+      "checks": {
+        "NORMAL_P75": {
+          "maximum_drawdown": true,
+          "minimum_trades": false,
+          "positive_expectancy": false,
+          "profit_factor": false
+        },
+        "STRESSED_P95": {
+          "maximum_drawdown": true,
+          "minimum_trades": false,
+          "positive_expectancy": false,
+          "profit_factor": false
+        }
+      },
+      "gates_passed": false,
+      "hypothesis_eligible": 58,
+      "joined": 260,
+      "market": "USDJPY",
+      "metrics": {
+        "NORMAL_P75": {
+          "cumulative_compounded_return": -0.000573710049040832,
+          "max_compounded_drawdown": 0.000573710049040832,
+          "no_trade_count": 17,
+          "profit_factor": 0.0,
+          "trade_count": 1,
+          "trade_expectancy": -0.0005737100490408775
+        },
+        "STRESSED_P95": {
+          "cumulative_compounded_return": -0.0006694485483418333,
+          "max_compounded_drawdown": 0.0006694485483418333,
+          "no_trade_count": 17,
+          "profit_factor": 0.0,
+          "trade_count": 1,
+          "trade_expectancy": -0.0006694485483418561
+        }
+      },
+      "status": "DEVELOPMENT_REJECTED",
+      "trade_probability_threshold": 0.65,
+      "training_class_counts": {
+        "0": 23,
+        "1": 17
+      },
+      "training_count": 40
+    }
+  ],
+  "model": "STANDARD_SCALER_PLUS_LOGISTIC_REGRESSION",
+  "model_parameters": {
+    "class_weight": "balanced",
+    "max_iter": 1000,
+    "random_state": 41
+  },
+  "model_promotion": "NONE",
+  "outcome_manifest_sha256": "0ea32c4427a647e246b7adb41a0d616857e05f3b0697268c8b9d47265353d251",
+  "protocol_sha256": "e85c4fe3189818e5404ac7e07d95b3c51f666d8619aaba4cb16932af12584f7b",
+  "report_sha256": "ef0e0418ced844e11c50a0f12a1573961e32eb6a68ef0b7fa34df72d2af9cd1f",
+  "trade_probability_threshold": 0.65,
+  "validation_accessed": false
+}
